@@ -1,0 +1,7 @@
+CoastCams Analysis Summary
+
+Analysis Date: 27-Aug-2024 12:56:39
+Number of Images Processed: 16
+Time Range: 13-Oct-2021 07:45:00 to 13-Oct-2021 11:30:00
+Mean Significant Wave Height: 5.48 m
+Mean Peak Wave Period: 12.39 s
