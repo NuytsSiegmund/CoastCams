@@ -38,6 +38,9 @@ class CoastCamsVisualizer:
         # Create output directory if it doesn't exist
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
+            print(f"Created output directory: {output_dir}")
+
+        print(f"Visualizer initialized: output_dir={output_dir}, save_plots={save_plots}")
 
         # Set default style
         plt.style.use('seaborn-v0_8-darkgrid' if 'seaborn-v0_8-darkgrid' in plt.style.available else 'default')
@@ -79,7 +82,15 @@ class CoastCamsVisualizer:
         plt.tight_layout()
 
         if self.save_plots:
-            plt.savefig(os.path.join(self.output_dir, filename), dpi=300, bbox_inches='tight')
+            try:
+                save_path = os.path.join(self.output_dir, filename)
+                print(f"Saving plot: {save_path}")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Successfully saved: {filename}")
+            except Exception as e:
+                print(f"ERROR saving {filename}: {e}")
+                import traceback
+                traceback.print_exc()
 
         plt.close()
 
@@ -121,7 +132,15 @@ class CoastCamsVisualizer:
         plt.tight_layout()
 
         if self.save_plots:
-            plt.savefig(os.path.join(self.output_dir, filename), dpi=300, bbox_inches='tight')
+            try:
+                save_path = os.path.join(self.output_dir, filename)
+                print(f"Saving plot: {save_path}")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Successfully saved: {filename}")
+            except Exception as e:
+                print(f"ERROR saving {filename}: {e}")
+                import traceback
+                traceback.print_exc()
 
         plt.close()
 
@@ -186,7 +205,15 @@ class CoastCamsVisualizer:
         plt.tight_layout()
 
         if self.save_plots:
-            plt.savefig(os.path.join(self.output_dir, filename), dpi=300, bbox_inches='tight')
+            try:
+                save_path = os.path.join(self.output_dir, filename)
+                print(f"Saving plot: {save_path}")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Successfully saved: {filename}")
+            except Exception as e:
+                print(f"ERROR saving {filename}: {e}")
+                import traceback
+                traceback.print_exc()
 
         plt.close()
 
@@ -238,7 +265,15 @@ class CoastCamsVisualizer:
         plt.tight_layout()
 
         if self.save_plots:
-            plt.savefig(os.path.join(self.output_dir, filename), dpi=300, bbox_inches='tight')
+            try:
+                save_path = os.path.join(self.output_dir, filename)
+                print(f"Saving plot: {save_path}")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Successfully saved: {filename}")
+            except Exception as e:
+                print(f"ERROR saving {filename}: {e}")
+                import traceback
+                traceback.print_exc()
 
         plt.close()
 
@@ -318,7 +353,15 @@ class CoastCamsVisualizer:
         plt.tight_layout()
 
         if self.save_plots:
-            plt.savefig(os.path.join(self.output_dir, filename), dpi=300, bbox_inches='tight')
+            try:
+                save_path = os.path.join(self.output_dir, filename)
+                print(f"Saving plot: {save_path}")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Successfully saved: {filename}")
+            except Exception as e:
+                print(f"ERROR saving {filename}: {e}")
+                import traceback
+                traceback.print_exc()
 
         plt.close()
 
@@ -352,7 +395,15 @@ class CoastCamsVisualizer:
         plt.tight_layout()
 
         if self.save_plots:
-            plt.savefig(os.path.join(self.output_dir, filename), dpi=300, bbox_inches='tight')
+            try:
+                save_path = os.path.join(self.output_dir, filename)
+                print(f"Saving plot: {save_path}")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Successfully saved: {filename}")
+            except Exception as e:
+                print(f"ERROR saving {filename}: {e}")
+                import traceback
+                traceback.print_exc()
 
         plt.close()
 
@@ -384,7 +435,15 @@ class CoastCamsVisualizer:
         plt.tight_layout()
 
         if self.save_plots:
-            plt.savefig(os.path.join(self.output_dir, filename), dpi=300, bbox_inches='tight')
+            try:
+                save_path = os.path.join(self.output_dir, filename)
+                print(f"Saving plot: {save_path}")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Successfully saved: {filename}")
+            except Exception as e:
+                print(f"ERROR saving {filename}: {e}")
+                import traceback
+                traceback.print_exc()
 
         plt.close()
 

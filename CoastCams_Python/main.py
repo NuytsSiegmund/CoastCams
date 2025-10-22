@@ -322,14 +322,18 @@ class CoastCamsWorkflow:
 
     def _create_visualizations(self):
         """Create all visualizations."""
+        print("\n=== Creating Visualizations ===")
         timestamps = self.results.get('timestamps', [])
+        print(f"Number of timestamps: {len(timestamps)}")
 
         # Plot timestack
         if 'timestack' in self.results:
+            print("Plotting timestack...")
             self.visualizer.plot_timestack(self.results['timestack'])
 
         # Plot wave parameters
         if 'mean_Hs' in self.results and len(timestamps) > 0:
+            print("Plotting wave parameters...")
             wave_heights = np.full(len(timestamps), self.results['mean_Hs'])
             wave_periods = np.full(len(timestamps), self.results.get('mean_Tm', np.nan))
 
@@ -337,13 +341,17 @@ class CoastCamsWorkflow:
 
         # Plot bathymetry
         if 'depths_smoothed' in self.results and 'cross_shore_positions' in self.results:
+            print("Plotting bathymetry...")
             self.visualizer.plot_bathymetry(
                 self.results['cross_shore_positions'],
                 self.results['depths_smoothed']
             )
 
         # Plot comprehensive analysis
+        print("Plotting comprehensive analysis...")
         self.visualizer.plot_comprehensive_analysis(self.results, timestamps)
+
+        print("=== Visualization Complete ===\n")
 
 
 def main():
