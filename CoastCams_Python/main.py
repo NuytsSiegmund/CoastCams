@@ -186,12 +186,12 @@ class CoastCamsWorkflow:
         Parameters
         ----------
         img : np.ndarray
-            Input timestack image (already space x time)
+            Input timestack image (time x space x channels), e.g., (1680, 689, 3)
 
         Returns
         -------
         np.ndarray
-            Preprocessed timestack (normalized, enhanced)
+            Preprocessed timestack (time x space), e.g., (1680, 689)
         """
         # Convert to grayscale if needed
         if len(img.shape) == 3:
@@ -211,7 +211,7 @@ class CoastCamsWorkflow:
         Parameters
         ----------
         timestack : np.ndarray
-            Preprocessed timestack (space x time)
+            Preprocessed timestack (time x space), e.g., (1680, 689)
         shoreline : np.ndarray
             Detected shoreline positions
 
