@@ -270,20 +270,22 @@ class CoastCamsVisualizer:
             ax1.set_ylabel('Cross-shore Position')
             plt.colorbar(im, ax=ax1, label='Intensity')
 
-        # 2. Wave height
-        if 'wave_heights' in results:
+        # 2. Wave height (use mean values for time series)
+        if 'mean_Hs' in results and len(timestamps) > 0:
             ax2 = fig.add_subplot(gs[1, 0])
-            ax2.plot(timestamps, results['wave_heights'], 'b-', linewidth=1.5)
+            wave_heights_ts = np.full(len(timestamps), results['mean_Hs'])
+            ax2.plot(timestamps, wave_heights_ts, 'b-', linewidth=1.5)
             ax2.set_title('Significant Wave Height', fontsize=12, fontweight='bold')
             ax2.set_ylabel('Hs (m)')
             ax2.grid(True, alpha=0.3)
             ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
             plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
 
-        # 3. Wave period
-        if 'wave_periods' in results:
+        # 3. Wave period (use mean values for time series)
+        if 'mean_Tm' in results and len(timestamps) > 0:
             ax3 = fig.add_subplot(gs[1, 1])
-            ax3.plot(timestamps, results['wave_periods'], 'g-', linewidth=1.5)
+            wave_periods_ts = np.full(len(timestamps), results['mean_Tm'])
+            ax3.plot(timestamps, wave_periods_ts, 'g-', linewidth=1.5)
             ax3.set_title('Wave Period', fontsize=12, fontweight='bold')
             ax3.set_ylabel('T (s)')
             ax3.grid(True, alpha=0.3)
