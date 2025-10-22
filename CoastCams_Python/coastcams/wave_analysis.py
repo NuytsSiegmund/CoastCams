@@ -84,24 +84,34 @@ class WaveAnalyzer:
             # Convert to meters
             shoreline_positions_m = shoreline_positions * self.pixel_resolution
 
-            # Compute wave height from shoreline variations
-            # Remove NaN values
+            # Remove NaN values and detrend
             valid_positions = shoreline_positions_m[~np.isnan(shoreline_positions_m)]
 
             if len(valid_positions) > 2:
-                # Standard deviation of runup
-                runup_std = np.std(valid_positions)
+                # Detrend the signal (remove linear trend)
+                x = np.arange(len(valid_positions))
+                p = np.polyfit(x, valid_positions, 1)
+                detrended = valid_positions - (p[0] * x + p[1])
 
-                # Significant wave height (Hs) is approximately 1.27 * runup_std
-                # This is a standard coastal engineering relationship
-                Hs = 1.27 * runup_std
+                # Remove mean
+                detrended = detrended - np.mean(detrended)
+
+                # Compute wave height using spectral method: Hs = 4 * σ
+                # This is the standard oceanographic formula (same as MATLAB Wave_Char.m line 159)
+                Hs = 4.0 * np.std(detrended)
 
                 # Mean wave height is typically 0.63 * Hs
                 Hm = 0.63 * Hs
 
+                # Debug output
+                print(f"  Shoreline analysis: {len(valid_positions)} valid points")
+                print(f"  Position range: {np.min(valid_positions):.2f} to {np.max(valid_positions):.2f} m")
+                print(f"  Std deviation (detrended): {np.std(detrended):.3f} m")
+                print(f"  Computed Hs: {Hs:.3f} m, Hm: {Hm:.3f} m")
+
                 results['mean_Hs'] = Hs
                 results['mean_Hm'] = Hm
-                results['runup_std'] = runup_std
+                results['runup_std'] = np.std(detrended)
             else:
                 results['mean_Hs'] = np.nan
                 results['mean_Hm'] = np.nan
@@ -142,18 +152,29 @@ class WaveAnalyzer:
             results['mean_Hs'] = np.mean(valid_heights) if len(valid_heights) > 0 else np.nan
             results['max_Hs'] = np.max(valid_heights) if len(valid_heights) > 0 else np.nan
 
-        # Analyze wave periods from timestack
-        wave_periods = []
-        for i in range(timestack.shape[0]):
-            timeseries = timestack[i, :]
-            params = self._analyze_timeseries(timeseries)
-            wave_periods.append(params['mean_period'])
+        # Analyze wave periods from timestack or shorelines
+        if shorelines is not None and len(valid_positions) > 2:
+            # Use shoreline time series for period calculation
+            periods = self._compute_wave_periods_from_timeseries(detrended)
+            if len(periods) > 0:
+                results['mean_Tm'] = np.mean(periods)
+                print(f"  Mean wave period: {results['mean_Tm']:.2f} s")
+            else:
+                results['mean_Tm'] = np.nan
+                print(f"  Mean wave period: No periods detected")
+        else:
+            # Fallback: analyze timestack for periods
+            wave_periods = []
+            for i in range(min(10, timestack.shape[0])):  # Sample first 10 positions
+                timeseries = timestack[i, :]
+                params = self._analyze_timeseries(timeseries)
+                if not np.isnan(params['mean_period']):
+                    wave_periods.append(params['mean_period'])
 
-        wave_periods_array = np.array(wave_periods)
-        results['wave_periods'] = wave_periods_array
-
-        valid_periods = wave_periods_array[~np.isnan(wave_periods_array)]
-        results['mean_Tm'] = np.mean(valid_periods) if len(valid_periods) > 0 else np.nan
+            if len(wave_periods) > 0:
+                results['mean_Tm'] = np.mean(wave_periods)
+            else:
+                results['mean_Tm'] = np.nan
 
         results['cross_shore_positions'] = cross_shore_positions
 
@@ -223,6 +244,37 @@ class WaveAnalyzer:
                 heights.append(height)
 
         return heights
+
+    def _compute_wave_periods_from_timeseries(self, timeseries: np.ndarray) -> List[float]:
+        """
+        Compute wave periods from a detrended time series using zero-crossing method.
+        This matches the MATLAB Wave_Char.m approach.
+
+        Parameters
+        ----------
+        timeseries : np.ndarray
+            Detrended time series
+
+        Returns
+        -------
+        List[float]
+            List of wave periods in seconds
+        """
+        # Find zero crossings (upward crossings)
+        signs = np.sign(timeseries)
+        zero_crossings = np.where((signs[:-1] <= 0) & (signs[1:] > 0))[0]
+
+        periods = []
+
+        # Measure time between successive crossings (full wave period)
+        for i in range(len(zero_crossings) - 1):
+            period = (zero_crossings[i + 1] - zero_crossings[i]) * self.dt
+
+            # Filter by expected period range
+            if self.min_period <= period <= self.max_period:
+                periods.append(period)
+
+        return periods
 
     def _compute_wave_periods(self, timeseries: np.ndarray) -> List[float]:
         """
