@@ -26,9 +26,9 @@ def main():
     print("CoastCams - Shoreline Detection Example")
     print("="*70)
 
-    # Initialize configuration
-    config = CoastCamsConfig()
-    config.auto_detect_paths()
+    # Initialize configuration from config.yaml
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.yaml')
+    config = CoastCamsConfig(config_path)
 
     print("\nConfiguration:")
     print(f"  Input directory: {config.input_dir}")

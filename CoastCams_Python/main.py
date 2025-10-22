@@ -375,7 +375,14 @@ def main():
 
     # Run analysis
     try:
-        workflow = CoastCamsWorkflow(args.config)
+        # Use config.yaml by default if no config specified
+        config_file = args.config
+        if config_file is None:
+            default_config = os.path.join(os.path.dirname(__file__), 'config.yaml')
+            if os.path.exists(default_config):
+                config_file = default_config
+
+        workflow = CoastCamsWorkflow(config_file)
         workflow.run_full_analysis()
     except KeyboardInterrupt:
         print("\n\nAnalysis interrupted by user.")

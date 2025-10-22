@@ -27,9 +27,9 @@ def main():
     print("CoastCams - Wave Analysis Example")
     print("="*70)
 
-    # Initialize configuration
-    config = CoastCamsConfig()
-    config.auto_detect_paths()
+    # Initialize configuration from config.yaml
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.yaml')
+    config = CoastCamsConfig(config_path)
 
     # Initialize modules
     loader = ImageLoader(config.input_dir, config.rotation_angle)

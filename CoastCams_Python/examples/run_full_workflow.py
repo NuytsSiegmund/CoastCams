@@ -23,9 +23,10 @@ def main():
     print("CoastCams - Full Workflow Example")
     print("="*70)
 
-    # Option 1: Run with default configuration
-    print("\nOption 1: Running with default configuration...")
-    workflow = CoastCamsWorkflow()
+    # Option 1: Run with config.yaml in parent directory
+    print("\nOption 1: Running with config.yaml...")
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.yaml')
+    workflow = CoastCamsWorkflow(config_file=config_path)
     workflow.run_full_analysis()
 
     # Option 2: Run with custom configuration
