@@ -96,6 +96,9 @@ class ShorelineDetector:
         # Apply smoothing to remove outliers
         shoreline_smooth = self._smooth_shoreline(shoreline_positions)
 
+        # Convert to float to allow NaN values
+        shoreline_smooth = shoreline_smooth.astype(np.float64)
+
         # Filter by threshold
         max_gradients = np.max(gradient_y, axis=0)
         shoreline_smooth[max_gradients < self.threshold] = np.nan
@@ -137,6 +140,9 @@ class ShorelineDetector:
         # Apply smoothing
         shoreline_smooth = self._smooth_shoreline(shoreline_positions)
 
+        # Convert to float to allow NaN values
+        shoreline_smooth = shoreline_smooth.astype(np.float64)
+
         # Filter by threshold
         max_gradients = np.max(gradient_y, axis=0)
         shoreline_smooth[max_gradients < self.threshold] = np.nan
@@ -177,6 +183,9 @@ class ShorelineDetector:
 
         # Apply smoothing
         shoreline_smooth = self._smooth_shoreline(shoreline_positions)
+
+        # Convert to float to allow NaN values
+        shoreline_smooth = shoreline_smooth.astype(np.float64)
 
         # Filter by threshold
         max_gradients = np.max(combined_gradient, axis=0)
