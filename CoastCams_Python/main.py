@@ -18,6 +18,7 @@ import sys
 import argparse
 import numpy as np
 import pandas as pd
+import cv2
 from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
@@ -105,34 +106,65 @@ class CoastCamsWorkflow:
             return
 
         print(self.image_loader.get_summary())
+        print(f"\nNOTE: Processing {num_images} timestack images individually")
+        print("(Each image is a space x time array analyzed independently)\n")
 
-        # Step 2: Detect shorelines
-        print("\n[2/7] Detecting shorelines...")
-        shorelines = self._detect_shorelines()
+        # Process each timestack image individually (matching MATLAB workflow)
+        all_results = []
 
-        # Step 3: Preprocess images and create timestack
-        print("\n[3/7] Preprocessing images and creating timestack...")
-        timestack = self._create_timestack()
+        for img_idx in range(num_images):
+            print(f"\n{'='*70}")
+            print(f"Image {img_idx+1}/{num_images}: {self.image_loader.timestamps[img_idx]}")
+            print(f"{'='*70}")
 
-        # Step 4: Analyze wave parameters
-        print("\n[4/7] Analyzing wave parameters...")
-        wave_results = self._analyze_waves(timestack, shorelines)
+            # Load single image (this image IS a timestack: space x time)
+            img = self.image_loader.load_image(img_idx)
+            print(f"  Loaded timestack shape: {img.shape}")
 
-        # Step 5: Perform cross-correlation analysis
-        print("\n[5/7] Performing cross-correlation analysis...")
-        correlation_results = self._analyze_correlations(timestack)
+            # Step 2: Detect shoreline for this timestack
+            print("[2/7] Detecting shoreline...")
+            shoreline = self.shoreline_detector.detect(img)
 
-        # Step 6: Estimate bathymetry
-        print("\n[6/7] Estimating bathymetry...")
-        bathymetry_results = self._estimate_bathymetry(wave_results, correlation_results)
+            # Step 3: Preprocess timestack
+            print("[3/7] Preprocessing timestack...")
+            timestack = self._preprocess_single_timestack(img)
+            print(f"  Preprocessed timestack shape: {timestack.shape}")
 
-        # Step 7: Compute sea level anomalies
-        print("\n[7/7] Computing sea level anomalies...")
-        sla_results = self._compute_sea_level(shorelines, bathymetry_results)
+            # Step 4: Analyze wave parameters
+            print("[4/7] Analyzing wave parameters...")
+            wave_results = self._analyze_single_timestack(timestack, shoreline)
+
+            # Step 5: Perform cross-correlation analysis
+            print("[5/7] Performing cross-correlation...")
+            correlation_results = self.correlation_analyzer.analyze_timestack(timestack)
+
+            # Step 6: Estimate bathymetry
+            print("[6/7] Estimating bathymetry...")
+            bathymetry_results = self._estimate_bathymetry(wave_results, correlation_results)
+
+            # Step 7: Compute sea level anomaly
+            print("[7/7] Computing sea level anomaly...")
+            sla = self._compute_sla_single(shoreline, bathymetry_results)
+
+            # Store results for this image
+            result = {
+                'timestamp': self.image_loader.timestamps[img_idx],
+                'shoreline_mean': np.nanmean(shoreline) if shoreline is not None else np.nan,
+                'wave_height': wave_results.get('mean_Hs', np.nan),
+                'wave_period': wave_results.get('mean_Tm', np.nan),
+                'wave_celerity': correlation_results.get('mean_celerity', np.nan),
+                'water_depth': bathymetry_results.get('mean_depth', np.nan),
+                'sla': sla,
+            }
+            all_results.append(result)
+
+            print(f"  → Wave Height: {result['wave_height']:.3f} m" if not np.isnan(result['wave_height']) else "  → Wave Height: N/A")
+            print(f"  → Wave Period: {result['wave_period']:.2f} s" if not np.isnan(result['wave_period']) else "  → Wave Period: N/A")
+            print(f"  → Celerity: {result['wave_celerity']:.3f} m/s" if not np.isnan(result['wave_celerity']) else "  → Celerity: N/A")
+            print(f"  → Water Depth: {result['water_depth']:.2f} m" if not np.isnan(result['water_depth']) else "  → Water Depth: N/A")
 
         # Aggregate all results
-        self._aggregate_results(shorelines, wave_results, correlation_results,
-                               bathymetry_results, sla_results, timestack)
+        self._aggregate_all_results(all_results)
 
         # Export results
         print("\nExporting results...")
@@ -146,6 +178,129 @@ class CoastCamsWorkflow:
         print("Analysis complete!")
         print(f"Results saved to: {self.config.output_dir}")
         print("="*70 + "\n")
+
+    def _preprocess_single_timestack(self, img):
+        """
+        Preprocess a single timestack image.
+
+        Parameters
+        ----------
+        img : np.ndarray
+            Input timestack image (already space x time)
+
+        Returns
+        -------
+        np.ndarray
+            Preprocessed timestack (normalized, enhanced)
+        """
+        # Convert to grayscale if needed
+        if len(img.shape) == 3:
+            timestack = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+        else:
+            timestack = img.astype(np.float32) / 255.0
+
+        # Enhance wave signals
+        timestack_enhanced = self.preprocessor.enhance_waves(timestack)
+
+        return timestack_enhanced
+
+    def _analyze_single_timestack(self, timestack, shoreline):
+        """
+        Analyze wave parameters from a single timestack.
+
+        Parameters
+        ----------
+        timestack : np.ndarray
+            Preprocessed timestack (space x time)
+        shoreline : np.ndarray
+            Detected shoreline positions
+
+        Returns
+        -------
+        dict
+            Wave analysis results
+        """
+        # Create cross-shore position array
+        num_positions = timestack.shape[0]
+        cross_shore_positions = np.arange(num_positions) * self.config.pixel_resolution
+
+        # Analyze this timestack
+        wave_results = self.wave_analyzer.analyze_timestack(
+            timestack, cross_shore_positions, shorelines=[shoreline] if shoreline is not None else None
+        )
+
+        return wave_results
+
+    def _compute_sla_single(self, shoreline, bathymetry_results):
+        """
+        Compute sea level anomaly for a single timestack.
+
+        Parameters
+        ----------
+        shoreline : np.ndarray
+            Detected shoreline positions
+        bathymetry_results : dict
+            Bathymetry estimation results
+
+        Returns
+        -------
+        float
+            Sea level anomaly (meters)
+        """
+        if shoreline is not None:
+            valid_pos = shoreline[~np.isnan(shoreline)]
+            if len(valid_pos) > 0:
+                avg_shoreline = np.mean(valid_pos)
+            else:
+                return np.nan
+        else:
+            return np.nan
+
+        # Get depth
+        mean_depth = bathymetry_results.get('mean_depth', 2.0)
+        if np.isnan(mean_depth):
+            mean_depth = 2.0  # Default
+
+        # Compute SLA
+        sla = self.sea_level_analyzer.compute_sla_from_shoreline(
+            np.array([avg_shoreline]), np.array([mean_depth])
+        )
+
+        return sla[0] if len(sla) > 0 else np.nan
+
+    def _aggregate_all_results(self, all_results):
+        """
+        Aggregate results from all individual timstacks.
+
+        Parameters
+        ----------
+        all_results : list
+            List of result dictionaries, one per timestack image
+        """
+        # Extract arrays for each parameter
+        timestamps = [r['timestamp'] for r in all_results]
+        shorelines = [r['shoreline_mean'] for r in all_results]
+        wave_heights = [r['wave_height'] for r in all_results]
+        wave_periods = [r['wave_period'] for r in all_results]
+        wave_celerities = [r['wave_celerity'] for r in all_results]
+        water_depths = [r['water_depth'] for r in all_results]
+        slas = [r['sla'] for r in all_results]
+
+        # Store in results dictionary
+        self.results = {
+            'timestamps': timestamps,
+            'shoreline_positions': np.array(shorelines),
+            'wave_heights_timeseries': np.array(wave_heights),
+            'wave_periods_timeseries': np.array(wave_periods),
+            'celerities': np.array(wave_celerities),
+            'depths': np.array(water_depths),
+            'sla_values': np.array(slas),
+            # Aggregate statistics
+            'mean_Hs': np.nanmean(wave_heights),
+            'mean_Tm': np.nanmean(wave_periods),
+            'mean_celerity': np.nanmean(wave_celerities),
+            'mean_depth': np.nanmean(water_depths),
+        }
 
     def _detect_shorelines(self):
         """Detect shorelines in all images."""
@@ -297,24 +452,18 @@ class CoastCamsWorkflow:
             data['ShorelinePosition_m'] = (self.results['shoreline_positions'] *
                                           self.config.pixel_resolution)
 
-        # Add wave parameters
-        # Use time-varying wave heights if available
+        # Add wave parameters (per-image values)
         if 'wave_heights_timeseries' in self.results:
-            wave_heights_ts = self.results['wave_heights_timeseries']
-            # Ensure lengths match
-            if len(wave_heights_ts) == len(timestamps):
-                data['WaveHeight_m'] = wave_heights_ts
-            else:
-                print(f"Warning: Wave heights length ({len(wave_heights_ts)}) != timestamps ({len(timestamps)})")
-                data['WaveHeight_m'] = [self.results.get('mean_Hs', np.nan)] * len(timestamps)
-        elif 'mean_Hs' in self.results:
-            data['WaveHeight_m'] = [self.results['mean_Hs']] * len(timestamps)
+            data['WaveHeight_m'] = self.results['wave_heights_timeseries']
 
-        # Wave period - currently computed as aggregate, could be per-timestep in future
-        if 'mean_Tm' in self.results and not np.isnan(self.results['mean_Tm']):
-            data['WavePeriod_s'] = [self.results['mean_Tm']] * len(timestamps)
-        else:
-            data['WavePeriod_s'] = [np.nan] * len(timestamps)
+        if 'wave_periods_timeseries' in self.results:
+            data['WavePeriod_s'] = self.results['wave_periods_timeseries']
+
+        if 'celerities' in self.results:
+            data['WaveCelerity_m_s'] = self.results['celerities']
+
+        if 'depths' in self.results:
+            data['WaterDepth_m'] = self.results['depths']
 
         # Add SLA
         if 'sla_values' in self.results:
