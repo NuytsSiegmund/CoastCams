@@ -229,8 +229,25 @@ def butter_lowpass_filter(data: np.ndarray, cutoff: float, fs: float,
     """
     from scipy.signal import butter, filtfilt
 
+    # Check if data is long enough for filtering
+    # filtfilt needs at least 3*(order+1) samples
+    min_length = 3 * (order + 1)
+
+    if len(data) < min_length:
+        # Reduce filter order for short data
+        max_order = max(1, len(data) // 3 - 1)
+        if max_order < 1:
+            # Data too short, return as-is
+            return data
+        order = min(order, max_order)
+
     nyquist = 0.5 * fs
     normal_cutoff = cutoff / nyquist
+
+    # Ensure cutoff is valid (< Nyquist frequency)
+    if normal_cutoff >= 1.0:
+        return data
+
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
     filtered = filtfilt(b, a, data)
 
@@ -260,8 +277,25 @@ def butter_highpass_filter(data: np.ndarray, cutoff: float, fs: float,
     """
     from scipy.signal import butter, filtfilt
 
+    # Check if data is long enough for filtering
+    # filtfilt needs at least 3*(order+1) samples
+    min_length = 3 * (order + 1)
+
+    if len(data) < min_length:
+        # Reduce filter order for short data
+        max_order = max(1, len(data) // 3 - 1)
+        if max_order < 1:
+            # Data too short, return as-is
+            return data
+        order = min(order, max_order)
+
     nyquist = 0.5 * fs
     normal_cutoff = cutoff / nyquist
+
+    # Ensure cutoff is valid
+    if normal_cutoff <= 0 or normal_cutoff >= 1.0:
+        return data
+
     b, a = butter(order, normal_cutoff, btype='high', analog=False)
     filtered = filtfilt(b, a, data)
 
