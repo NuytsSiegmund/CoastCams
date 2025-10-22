@@ -116,7 +116,7 @@ class CoastCamsWorkflow:
 
         # Step 4: Analyze wave parameters
         print("\n[4/7] Analyzing wave parameters...")
-        wave_results = self._analyze_waves(timestack)
+        wave_results = self._analyze_waves(timestack, shorelines)
 
         # Step 5: Perform cross-correlation analysis
         print("\n[5/7] Performing cross-correlation analysis...")
@@ -178,14 +178,16 @@ class CoastCamsWorkflow:
 
         return timestack_enhanced
 
-    def _analyze_waves(self, timestack):
+    def _analyze_waves(self, timestack, shorelines):
         """Analyze wave parameters from timestack."""
         # Create cross-shore position array
         num_positions = timestack.shape[0]
         cross_shore_positions = np.arange(num_positions) * self.config.pixel_resolution
 
-        # Analyze timestack
-        wave_results = self.wave_analyzer.analyze_timestack(timestack, cross_shore_positions)
+        # Analyze timestack with shoreline data for improved wave height estimation
+        wave_results = self.wave_analyzer.analyze_timestack(
+            timestack, cross_shore_positions, shorelines=shorelines
+        )
 
         return wave_results
 
