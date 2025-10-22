@@ -12,6 +12,26 @@ CoastCams is an open-source MATLAB toolbox designed to quantify key wave paramet
 - Automated error handling and logging
 - Improved image processing and analysis workflows
 
+## Python Version Available
+
+**NEW!** A complete Python port of CoastCams is now available in the [`CoastCams_Python/`](CoastCams_Python/) directory.
+
+The Python version offers:
+- ✅ **Fully automated workflow** - minimal user input required
+- ✅ **Modular design** - run complete analysis or specific tasks
+- ✅ **Non-expert friendly** - smart defaults and comprehensive documentation
+- ✅ **No MATLAB required** - uses open-source Python libraries
+- ✅ **Enhanced features** - additional analysis methods and visualizations
+
+Quick start:
+```bash
+cd CoastCams_Python
+pip install -r requirements.txt
+python main.py
+```
+
+See [`CoastCams_Python/README.md`](CoastCams_Python/README.md) for full documentation.
+
 ## Citation
 
 When using CoastCams, please cite:
