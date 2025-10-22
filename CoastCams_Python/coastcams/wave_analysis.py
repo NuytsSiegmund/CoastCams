@@ -78,14 +78,18 @@ class WaveAnalyzer:
             wave_energies.append(params['energy'])
 
         # Store arrays
-        results['wave_heights'] = np.array(wave_heights)
-        results['wave_periods'] = np.array(wave_periods)
-        results['wave_energies'] = np.array(wave_energies)
+        wave_heights_array = np.array(wave_heights)
+        wave_periods_array = np.array(wave_periods)
+        wave_energies_array = np.array(wave_energies)
+
+        results['wave_heights'] = wave_heights_array
+        results['wave_periods'] = wave_periods_array
+        results['wave_energies'] = wave_energies_array
         results['cross_shore_positions'] = cross_shore_positions
 
         # Compute aggregate statistics
-        valid_heights = wave_heights[~np.isnan(wave_heights)]
-        valid_periods = wave_periods[~np.isnan(wave_periods)]
+        valid_heights = wave_heights_array[~np.isnan(wave_heights_array)]
+        valid_periods = wave_periods_array[~np.isnan(wave_periods_array)]
 
         results['mean_Hs'] = np.mean(valid_heights) if len(valid_heights) > 0 else np.nan
         results['mean_Tm'] = np.mean(valid_periods) if len(valid_periods) > 0 else np.nan
