@@ -297,12 +297,24 @@ class CoastCamsWorkflow:
             data['ShorelinePosition_m'] = (self.results['shoreline_positions'] *
                                           self.config.pixel_resolution)
 
-        # Add wave parameters (aggregate per image)
-        if 'mean_Hs' in self.results:
+        # Add wave parameters
+        # Use time-varying wave heights if available
+        if 'wave_heights_timeseries' in self.results:
+            wave_heights_ts = self.results['wave_heights_timeseries']
+            # Ensure lengths match
+            if len(wave_heights_ts) == len(timestamps):
+                data['WaveHeight_m'] = wave_heights_ts
+            else:
+                print(f"Warning: Wave heights length ({len(wave_heights_ts)}) != timestamps ({len(timestamps)})")
+                data['WaveHeight_m'] = [self.results.get('mean_Hs', np.nan)] * len(timestamps)
+        elif 'mean_Hs' in self.results:
             data['WaveHeight_m'] = [self.results['mean_Hs']] * len(timestamps)
 
-        if 'mean_Tm' in self.results:
+        # Wave period - currently computed as aggregate, could be per-timestep in future
+        if 'mean_Tm' in self.results and not np.isnan(self.results['mean_Tm']):
             data['WavePeriod_s'] = [self.results['mean_Tm']] * len(timestamps)
+        else:
+            data['WavePeriod_s'] = [np.nan] * len(timestamps)
 
         # Add SLA
         if 'sla_values' in self.results:

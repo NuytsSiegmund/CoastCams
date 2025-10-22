@@ -68,35 +68,46 @@ class WaveAnalyzer:
         results = {}
 
         # Analyze timestack using camera geometry approach (matching MATLAB)
-        # Find breaking wave features and compute height from horizontal measurements
+        # Compute wave height for each time step
 
         if timestack.shape[0] > 0 and timestack.shape[1] > 1:
-            # Compute wave heights using photogrammetric method
-            wave_heights = self._compute_wave_heights_photogrammetric(
+            # Compute wave heights per time step
+            wave_heights_per_time = self._compute_wave_heights_per_timestep(
                 timestack, cross_shore_positions
             )
 
-            if len(wave_heights) > 0:
-                # Significant wave height: median of highest 1/3
-                sorted_heights = np.sort(wave_heights)[::-1]  # Descending
-                n_third = max(1, len(sorted_heights) // 3)
-                Hs = np.median(sorted_heights[:n_third])
-                Hm = np.median(wave_heights)
+            if len(wave_heights_per_time) > 0:
+                # Remove NaN values for statistics
+                valid_heights = wave_heights_per_time[~np.isnan(wave_heights_per_time)]
 
-                print(f"  Detected {len(wave_heights)} wave features")
-                print(f"  Computed Hs: {Hs:.3f} m (median of top 1/3)")
-                print(f"  Computed Hm: {Hm:.3f} m (median of all)")
+                if len(valid_heights) > 0:
+                    # Significant wave height: median of highest 1/3
+                    sorted_heights = np.sort(valid_heights)[::-1]
+                    n_third = max(1, len(sorted_heights) // 3)
+                    Hs = np.median(sorted_heights[:n_third])
+                    Hm = np.median(valid_heights)
 
-                results['mean_Hs'] = Hs
-                results['mean_Hm'] = Hm
-                results['wave_heights_individual'] = wave_heights
+                    print(f"  Computed wave heights for {len(valid_heights)}/{len(wave_heights_per_time)} time steps")
+                    print(f"  Mean Hs: {Hs:.3f} m, Mean Hm: {Hm:.3f} m")
+                    print(f"  Height range: {np.min(valid_heights):.3f} - {np.max(valid_heights):.3f} m")
+
+                    results['mean_Hs'] = Hs
+                    results['mean_Hm'] = Hm
+                    results['wave_heights_timeseries'] = wave_heights_per_time  # Per time step
+                else:
+                    print("  No valid wave heights computed")
+                    results['mean_Hs'] = np.nan
+                    results['mean_Hm'] = np.nan
+                    results['wave_heights_timeseries'] = np.full(timestack.shape[1], np.nan)
             else:
                 print("  No wave features detected")
                 results['mean_Hs'] = np.nan
                 results['mean_Hm'] = np.nan
+                results['wave_heights_timeseries'] = np.full(timestack.shape[1], np.nan)
         else:
             results['mean_Hs'] = np.nan
             results['mean_Hm'] = np.nan
+            results['wave_heights_timeseries'] = np.full(0, np.nan)
 
         # Analyze wave periods from timestack (using median cross-shore position)
         if timestack.shape[0] > 0 and timestack.shape[1] > 1:
@@ -200,6 +211,98 @@ class WaveAnalyzer:
                 heights.append(height)
 
         return heights
+
+    def _compute_wave_heights_per_timestep(self, timestack: np.ndarray,
+                                           cross_shore_positions: np.ndarray) -> np.ndarray:
+        """
+        Compute wave height for each time step using photogrammetric method.
+
+        Parameters
+        ----------
+        timestack : np.ndarray
+            2D timestack array (space x time)
+        cross_shore_positions : np.ndarray
+            Cross-shore positions in meters
+
+        Returns
+        -------
+        np.ndarray
+            Wave heights for each time step (length = timestack.shape[1])
+        """
+        wave_heights = np.full(timestack.shape[1], np.nan)
+        wave_face_angle = np.deg2rad(35.0)
+
+        # For each time step
+        for t in range(timestack.shape[1]):
+            try:
+                # Extract spatial profile
+                profile = timestack[:, t]
+
+                # Skip if too many NaNs
+                if np.sum(~np.isnan(profile)) < len(profile) / 2:
+                    continue
+
+                # Find intensity gradient (peaks indicate breaking)
+                gradient = np.gradient(profile)
+                gradient[np.isnan(gradient)] = 0
+
+                # Find significant features (high gradient regions)
+                threshold = np.nanstd(gradient) * 1.5
+                high_grad_regions = np.abs(gradient) > threshold
+
+                if not np.any(high_grad_regions):
+                    continue
+
+                # Find contiguous regions
+                # Use differences to find starts and ends
+                diff = np.diff(high_grad_regions.astype(int))
+                starts = np.where(diff == 1)[0] + 1
+                ends = np.where(diff == -1)[0] + 1
+
+                # Handle edge cases
+                if high_grad_regions[0]:
+                    starts = np.concatenate([[0], starts])
+                if high_grad_regions[-1]:
+                    ends = np.concatenate([ends, [len(high_grad_regions)]])
+
+                # Find the largest contiguous region (likely the wave face)
+                if len(starts) > 0 and len(ends) > 0:
+                    region_lengths = ends - starts
+                    max_region_idx = np.argmax(region_lengths)
+
+                    start_idx = starts[max_region_idx]
+                    end_idx = ends[max_region_idx]
+
+                    # Horizontal extent in pixels
+                    h_extent_pixels = end_idx - start_idx
+
+                    if h_extent_pixels > 2:  # At least 3 pixels
+                        # Get position of wave feature (middle of region)
+                        wave_pos_idx = (start_idx + end_idx) // 2
+
+                        if wave_pos_idx < len(cross_shore_positions):
+                            x_distance = cross_shore_positions[wave_pos_idx]
+
+                            if x_distance > 0.1:  # Avoid division by zero
+                                # Camera viewing angle
+                                camera_angle = np.arctan(self.camera_height / x_distance)
+
+                                # Horizontal distance of wave face
+                                L_horizontal = h_extent_pixels * self.pixel_resolution
+
+                                # Photogrammetric conversion
+                                correction = L_horizontal * np.tan(camera_angle) / np.tan(wave_face_angle)
+                                L_corrected = L_horizontal - correction
+                                wave_height = L_corrected * np.tan(camera_angle)
+
+                                # Only keep positive, realistic values
+                                if 0.1 < wave_height < 10.0:
+                                    wave_heights[t] = wave_height
+
+            except Exception as e:
+                continue
+
+        return wave_heights
 
     def _compute_wave_heights_photogrammetric(self, timestack: np.ndarray,
                                               cross_shore_positions: np.ndarray) -> List[float]:
