@@ -37,7 +37,7 @@ def main():
 
     # Initialize image loader
     print("\nLoading images...")
-    loader = ImageLoader(config.input_dir, config.rotation_angle)
+    loader = ImageLoader(config.resolve_path(config.input_dir), config.rotation_angle)
     num_images = loader.discover_images()
 
     if num_images == 0:
@@ -87,7 +87,7 @@ def main():
             print(f"    Valid points: {len(valid_positions)}/{len(shoreline)}")
 
             # Visualize result
-            visualizer = CoastCamsVisualizer(config.output_dir)
+            visualizer = CoastCamsVisualizer(config.resolve_path(config.output_dir))
             visualizer.plot_shoreline(
                 img, shoreline,
                 title=f'Shoreline Detection - Method {method_id} ({method_name})',

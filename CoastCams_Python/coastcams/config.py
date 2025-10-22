@@ -31,8 +31,12 @@ class CoastCamsConfig:
         # Set default configuration
         self._set_defaults()
 
+        # Store config file directory for resolving relative paths
+        self._config_dir = None
+
         # Load from file if provided
         if config_file and os.path.exists(config_file):
+            self._config_dir = os.path.dirname(os.path.abspath(config_file))
             self.load_from_file(config_file)
 
     def _set_defaults(self):
@@ -143,6 +147,34 @@ class CoastCamsConfig:
 
         return config_dict
 
+    def resolve_path(self, path: str) -> str:
+        """
+        Resolve path relative to config file directory.
+
+        Parameters
+        ----------
+        path : str
+            Path to resolve (can be relative or absolute)
+
+        Returns
+        -------
+        str
+            Absolute path
+        """
+        # Expand user home directory
+        path = os.path.expanduser(path)
+
+        # If already absolute, return as-is
+        if os.path.isabs(path):
+            return path
+
+        # If we have a config directory, resolve relative to it
+        if self._config_dir:
+            return os.path.abspath(os.path.join(self._config_dir, path))
+
+        # Otherwise resolve relative to current directory
+        return os.path.abspath(path)
+
     def validate(self) -> bool:
         """
         Validate configuration parameters.
@@ -169,8 +201,8 @@ class CoastCamsConfig:
         if self.shoreline_method not in [1, 2, 3]:
             errors.append("Shoreline method must be 1, 2, or 3")
 
-        # Validate file paths (resolve relative paths)
-        input_path = os.path.abspath(os.path.expanduser(self.input_dir))
+        # Validate file paths (resolve relative to config file location)
+        input_path = self.resolve_path(self.input_dir)
         if not os.path.exists(input_path):
             errors.append(f"Input directory '{self.input_dir}' does not exist (resolved to: {input_path})")
 

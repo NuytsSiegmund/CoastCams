@@ -34,12 +34,12 @@ def main():
     config = CoastCamsConfig(config_path)
 
     # Initialize modules
-    loader = ImageLoader(config.input_dir, config.rotation_angle, verbose=False)
+    loader = ImageLoader(config.resolve_path(config.input_dir), config.rotation_angle, verbose=False)
     preprocessor = ImagePreprocessor(config)
     wave_analyzer = WaveAnalyzer(config)
     correlation_analyzer = CrossCorrelationAnalyzer(config)
     bathymetry_estimator = BathymetryEstimator(config)
-    visualizer = CoastCamsVisualizer(config.output_dir)
+    visualizer = CoastCamsVisualizer(config.resolve_path(config.output_dir))
 
     # Load and process images
     print("\nLoading and processing images...")

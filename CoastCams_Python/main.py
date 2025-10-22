@@ -62,9 +62,9 @@ class CoastCamsWorkflow:
             print("Configuration validation failed. Please check your settings.")
             sys.exit(1)
 
-        # Initialize modules
+        # Initialize modules (resolve paths relative to config file)
         self.image_loader = ImageLoader(
-            self.config.input_dir,
+            self.config.resolve_path(self.config.input_dir),
             self.config.rotation_angle,
             self.config.verbose
         )
@@ -76,7 +76,7 @@ class CoastCamsWorkflow:
         self.bathymetry_estimator = BathymetryEstimator(self.config)
         self.sea_level_analyzer = SeaLevelAnalyzer(self.config)
         self.visualizer = CoastCamsVisualizer(
-            self.config.output_dir,
+            self.config.resolve_path(self.config.output_dir),
             self.config.save_plots
         )
 
