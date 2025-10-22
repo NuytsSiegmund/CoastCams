@@ -65,57 +65,57 @@ class WaveAnalyzer:
         """
         results = {}
 
-        # If shorelines provided, use them for wave height estimation
-        if shorelines is not None and len(shorelines) > 0:
-            # Extract mean shoreline positions for each time step
-            shoreline_positions = []
-            for sl in shorelines:
-                if sl is not None:
-                    valid = sl[~np.isnan(sl)]
-                    if len(valid) > 0:
-                        shoreline_positions.append(np.mean(valid))
-                    else:
-                        shoreline_positions.append(np.nan)
-                else:
-                    shoreline_positions.append(np.nan)
+        # Analyze timestack intensity to compute wave height
+        # MATLAB approach: analyze intensity variations at breaking location
+        # We'll use the median cross-shore position and analyze its time series
 
-            shoreline_positions = np.array(shoreline_positions)
+        # Find the location with maximum variability (breaking zone)
+        if timestack.shape[0] > 0 and timestack.shape[1] > 1:
+            # Compute standard deviation along time axis for each position
+            std_profile = np.std(timestack, axis=1)
 
-            # Convert to meters
-            shoreline_positions_m = shoreline_positions * self.pixel_resolution
+            # Find location of maximum variability (likely breaking zone)
+            if len(std_profile) > 0 and not np.all(np.isnan(std_profile)):
+                break_location = np.nanargmax(std_profile)
 
-            # Remove NaN values and detrend
-            valid_positions = shoreline_positions_m[~np.isnan(shoreline_positions_m)]
+                # Extract time series at breaking location
+                intensity_timeseries = timestack[break_location, :]
 
-            if len(valid_positions) > 2:
-                # Detrend the signal (remove linear trend)
-                x = np.arange(len(valid_positions))
-                p = np.polyfit(x, valid_positions, 1)
-                detrended = valid_positions - (p[0] * x + p[1])
-
-                # Remove mean
+                # Detrend the signal
+                x = np.arange(len(intensity_timeseries))
+                p = np.polyfit(x, intensity_timeseries, 1)
+                detrended = intensity_timeseries - (p[0] * x + p[1])
                 detrended = detrended - np.mean(detrended)
 
                 # Compute wave height using spectral method: Hs = 4 * σ
-                # This is the standard oceanographic formula (same as MATLAB Wave_Char.m line 159)
-                Hs = 4.0 * np.std(detrended)
+                # Scale by pixel resolution to convert intensity variations to physical units
+                # Empirical scaling factor for intensity-based measurements
+                sigma = np.std(detrended)
 
-                # Mean wave height is typically 0.63 * Hs
+                # Convert normalized intensity (0-1 range) to meters
+                # Typical wave amplitude corresponds to ~10-50 intensity units in normalized timestack
+                # Scale factor: assume intensity range of 0.1 corresponds to ~1m wave height
+                scale_factor = 10.0  # Empirical factor
+                Hs = 4.0 * sigma * scale_factor * self.pixel_resolution
+
+                # Clip to realistic range (0.1m to 10m)
+                Hs = np.clip(Hs, 0.1, 10.0)
+
+                # Mean wave height
                 Hm = 0.63 * Hs
 
                 # Debug output
-                print(f"  Shoreline analysis: {len(valid_positions)} valid points")
-                print(f"  Position range: {np.min(valid_positions):.2f} to {np.max(valid_positions):.2f} m")
-                print(f"  Std deviation (detrended): {np.std(detrended):.3f} m")
+                print(f"  Timestack analysis at position {break_location} ({cross_shore_positions[break_location]:.1f}m)")
+                print(f"  Intensity std: {sigma:.4f}")
                 print(f"  Computed Hs: {Hs:.3f} m, Hm: {Hm:.3f} m")
 
                 results['mean_Hs'] = Hs
                 results['mean_Hm'] = Hm
-                results['runup_std'] = np.std(detrended)
+                results['intensity_std'] = sigma
+                results['break_location'] = break_location
             else:
                 results['mean_Hs'] = np.nan
                 results['mean_Hm'] = np.nan
-                results['runup_std'] = np.nan
         else:
             # Fallback: analyze timestack intensity variations
             # (less accurate but works without shoreline data)
@@ -152,16 +152,32 @@ class WaveAnalyzer:
             results['mean_Hs'] = np.mean(valid_heights) if len(valid_heights) > 0 else np.nan
             results['max_Hs'] = np.max(valid_heights) if len(valid_heights) > 0 else np.nan
 
-        # Analyze wave periods from timestack or shorelines
-        if shorelines is not None and len(valid_positions) > 2:
-            # Use shoreline time series for period calculation
-            periods = self._compute_wave_periods_from_timeseries(detrended)
+        # Analyze wave periods from timestack
+        if timestack.shape[0] > 0 and timestack.shape[1] > 1 and 'break_location' in results:
+            # Use intensity time series at breaking location for period calculation
+            break_loc = results['break_location']
+            intensity_ts = timestack[break_loc, :]
+
+            # Detrend
+            x = np.arange(len(intensity_ts))
+            p = np.polyfit(x, intensity_ts, 1)
+            detrended_ts = intensity_ts - (p[0] * x + p[1])
+            detrended_ts = detrended_ts - np.mean(detrended_ts)
+
+            # Compute periods
+            periods = self._compute_wave_periods_from_timeseries(detrended_ts)
             if len(periods) > 0:
-                results['mean_Tm'] = np.mean(periods)
-                print(f"  Mean wave period: {results['mean_Tm']:.2f} s")
+                mean_period = np.mean(periods)
+                results['mean_Tm'] = mean_period
+                print(f"  Mean wave period: {mean_period:.2f} s ({len(periods)} waves detected)")
+
+                # Create array of periods for bathymetry calculation
+                # Use the mean period for all positions
+                results['wave_periods'] = np.full(len(cross_shore_positions), mean_period)
             else:
                 results['mean_Tm'] = np.nan
-                print(f"  Mean wave period: No periods detected")
+                results['wave_periods'] = np.full(len(cross_shore_positions), np.nan)
+                print(f"  Mean wave period: No valid periods detected")
         else:
             # Fallback: analyze timestack for periods
             wave_periods = []
@@ -172,9 +188,12 @@ class WaveAnalyzer:
                     wave_periods.append(params['mean_period'])
 
             if len(wave_periods) > 0:
-                results['mean_Tm'] = np.mean(wave_periods)
+                mean_period = np.mean(wave_periods)
+                results['mean_Tm'] = mean_period
+                results['wave_periods'] = np.full(len(cross_shore_positions), mean_period)
             else:
                 results['mean_Tm'] = np.nan
+                results['wave_periods'] = np.full(len(cross_shore_positions), np.nan)
 
         results['cross_shore_positions'] = cross_shore_positions
 

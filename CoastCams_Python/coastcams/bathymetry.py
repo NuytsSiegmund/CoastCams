@@ -96,6 +96,12 @@ class BathymetryEstimator:
         """
         depths = np.zeros(len(wave_periods))
 
+        # Debug: count valid inputs
+        valid_periods = np.sum(~np.isnan(wave_periods))
+        valid_celerities = np.sum(~np.isnan(wave_celerities))
+        print(f"  Valid wave periods: {valid_periods}/{len(wave_periods)}")
+        print(f"  Valid celerities: {valid_celerities}/{len(wave_celerities)}")
+
         for i in range(len(wave_periods)):
             if not np.isnan(wave_periods[i]) and not np.isnan(wave_celerities[i]):
                 depths[i] = self.estimate_depth_from_waves(
@@ -108,14 +114,27 @@ class BathymetryEstimator:
         depths_filtered = self._filter_depths(depths)
         depths_smoothed = self._smooth_depths(depths_filtered)
 
+        # Compute statistics with error handling
+        valid_depths = depths_filtered[~np.isnan(depths_filtered)]
+
+        if len(valid_depths) > 0:
+            mean_depth = np.nanmean(depths_filtered)
+            max_depth = np.nanmax(depths_filtered)
+            min_depth = np.nanmin(depths_filtered)
+        else:
+            mean_depth = np.nan
+            max_depth = np.nan
+            min_depth = np.nan
+            print("  Warning: No valid depth estimates. Check wave period and celerity values.")
+
         results = {
             'depths': depths,
             'depths_filtered': depths_filtered,
             'depths_smoothed': depths_smoothed,
             'cross_shore_positions': cross_shore_positions,
-            'mean_depth': np.nanmean(depths_filtered),
-            'max_depth': np.nanmax(depths_filtered),
-            'min_depth': np.nanmin(depths_filtered)
+            'mean_depth': mean_depth,
+            'max_depth': max_depth,
+            'min_depth': min_depth
         }
 
         return results
