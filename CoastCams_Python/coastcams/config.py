@@ -169,9 +169,10 @@ class CoastCamsConfig:
         if self.shoreline_method not in [1, 2, 3]:
             errors.append("Shoreline method must be 1, 2, or 3")
 
-        # Validate file paths
-        if not os.path.exists(self.input_dir):
-            errors.append(f"Input directory '{self.input_dir}' does not exist")
+        # Validate file paths (resolve relative paths)
+        input_path = os.path.abspath(os.path.expanduser(self.input_dir))
+        if not os.path.exists(input_path):
+            errors.append(f"Input directory '{self.input_dir}' does not exist (resolved to: {input_path})")
 
         # Print errors if any
         if errors:
