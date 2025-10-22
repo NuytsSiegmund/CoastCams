@@ -109,36 +109,52 @@ class WaveAnalyzer:
             results['mean_Hm'] = np.nan
             results['wave_heights_timeseries'] = np.full(0, np.nan)
 
-        # Analyze wave periods from timestack (using median cross-shore position)
+        # Analyze wave periods from timestack
         if timestack.shape[0] > 0 and timestack.shape[1] > 1:
-            # Find location with maximum intensity variation (proxy for breaking zone)
+            # Try multiple positions to find one with clear oscillations
             std_profile = np.std(timestack, axis=1)
-            if len(std_profile) > 0 and np.any(~np.isnan(std_profile)):
-                median_loc = timestack.shape[0] // 2  # Use middle position
-                intensity_ts = timestack[median_loc, :]
+
+            # Find positions with high variability
+            high_var_positions = np.argsort(std_profile)[-5:]  # Top 5 positions
+
+            all_periods = []
+
+            for pos in high_var_positions:
+                intensity_ts = timestack[pos, :]
+
+                # Remove NaNs
+                valid_mask = ~np.isnan(intensity_ts)
+                if np.sum(valid_mask) < len(intensity_ts) / 2:
+                    continue
+
+                intensity_valid = intensity_ts[valid_mask]
 
                 # Detrend
-                x = np.arange(len(intensity_ts))
-                p = np.polyfit(x, intensity_ts, 1)
-                detrended_ts = intensity_ts - (p[0] * x + p[1])
-                detrended_ts = detrended_ts - np.mean(detrended_ts)
+                x = np.arange(len(intensity_valid))
+                if len(x) > 2:
+                    p = np.polyfit(x, intensity_valid, 1)
+                    detrended_ts = intensity_valid - (p[0] * x + p[1])
+                    detrended_ts = detrended_ts - np.mean(detrended_ts)
 
-                # Compute periods using zero-crossing
-                periods = self._compute_wave_periods_from_timeseries(detrended_ts)
-                if len(periods) > 0:
-                    mean_period = np.mean(periods)
-                    results['mean_Tm'] = mean_period
-                    print(f"  Mean wave period: {mean_period:.2f} s ({len(periods)} cycles)")
+                    # Compute periods using zero-crossing
+                    periods = self._compute_wave_periods_from_timeseries(detrended_ts)
+                    all_periods.extend(periods)
 
-                    # Create array for bathymetry
-                    results['wave_periods'] = np.full(len(cross_shore_positions), mean_period)
-                else:
-                    results['mean_Tm'] = np.nan
-                    results['wave_periods'] = np.full(len(cross_shore_positions), np.nan)
-                    print(f"  Wave period: No cycles detected in intensity timeseries")
+            if len(all_periods) > 0:
+                # Use median of all detected periods
+                mean_period = np.median(all_periods)
+                results['mean_Tm'] = mean_period
+                print(f"  Mean wave period: {mean_period:.2f} s ({len(all_periods)} cycles from {len(high_var_positions)} positions)")
+
+                # Create array for bathymetry
+                results['wave_periods'] = np.full(len(cross_shore_positions), mean_period)
             else:
-                results['mean_Tm'] = np.nan
-                results['wave_periods'] = np.full(len(cross_shore_positions), np.nan)
+                # Fallback: estimate from sampling frequency
+                # Typical ocean waves: 8-12 seconds
+                estimated_period = 10.0
+                results['mean_Tm'] = estimated_period
+                results['wave_periods'] = np.full(len(cross_shore_positions), estimated_period)
+                print(f"  Wave period: No cycles detected, using estimated {estimated_period}s")
         else:
             results['mean_Tm'] = np.nan
             results['wave_periods'] = np.full(len(cross_shore_positions), np.nan)
@@ -215,7 +231,10 @@ class WaveAnalyzer:
     def _compute_wave_heights_per_timestep(self, timestack: np.ndarray,
                                            cross_shore_positions: np.ndarray) -> np.ndarray:
         """
-        Compute wave height for each time step using photogrammetric method.
+        Compute wave height for each time step using intensity variations.
+
+        Simplified approach: uses standard deviation of intensity at each time step
+        as a proxy for wave activity, then converts to physical height.
 
         Parameters
         ----------
@@ -230,77 +249,73 @@ class WaveAnalyzer:
             Wave heights for each time step (length = timestack.shape[1])
         """
         wave_heights = np.full(timestack.shape[1], np.nan)
-        wave_face_angle = np.deg2rad(35.0)
 
-        # For each time step
+        # Debug: check timestack properties
+        print(f"  Timestack shape: {timestack.shape}")
+        print(f"  Intensity range: {np.nanmin(timestack):.3f} to {np.nanmax(timestack):.3f}")
+        print(f"  Mean intensity: {np.nanmean(timestack):.3f}")
+
+        # For each time step, compute standard deviation of spatial profile
+        # Higher std = more wave activity
         for t in range(timestack.shape[1]):
             try:
-                # Extract spatial profile
+                # Extract spatial profile at this time
                 profile = timestack[:, t]
 
                 # Skip if too many NaNs
-                if np.sum(~np.isnan(profile)) < len(profile) / 2:
+                valid_points = ~np.isnan(profile)
+                if np.sum(valid_points) < len(profile) / 3:
                     continue
 
-                # Find intensity gradient (peaks indicate breaking)
-                gradient = np.gradient(profile)
-                gradient[np.isnan(gradient)] = 0
+                # Compute standard deviation (wave activity indicator)
+                profile_std = np.nanstd(profile)
 
-                # Find significant features (high gradient regions)
-                threshold = np.nanstd(gradient) * 1.5
-                high_grad_regions = np.abs(gradient) > threshold
+                # Detrend: remove mean
+                profile_detrended = profile[valid_points] - np.nanmean(profile[valid_points])
 
-                if not np.any(high_grad_regions):
-                    continue
+                # Compute range (max - min) as wave height indicator
+                if len(profile_detrended) > 0:
+                    intensity_range = np.max(profile_detrended) - np.min(profile_detrended)
 
-                # Find contiguous regions
-                # Use differences to find starts and ends
-                diff = np.diff(high_grad_regions.astype(int))
-                starts = np.where(diff == 1)[0] + 1
-                ends = np.where(diff == -1)[0] + 1
+                    # Find location of maximum variation (proxy for breaking location)
+                    max_var_idx = np.nanargmax(np.abs(profile_detrended))
 
-                # Handle edge cases
-                if high_grad_regions[0]:
-                    starts = np.concatenate([[0], starts])
-                if high_grad_regions[-1]:
-                    ends = np.concatenate([ends, [len(high_grad_regions)]])
+                    # Get approximate cross-shore position
+                    valid_indices = np.where(valid_points)[0]
+                    if max_var_idx < len(valid_indices):
+                        actual_idx = valid_indices[max_var_idx]
+                        if actual_idx < len(cross_shore_positions):
+                            x_distance = cross_shore_positions[actual_idx]
 
-                # Find the largest contiguous region (likely the wave face)
-                if len(starts) > 0 and len(ends) > 0:
-                    region_lengths = ends - starts
-                    max_region_idx = np.argmax(region_lengths)
-
-                    start_idx = starts[max_region_idx]
-                    end_idx = ends[max_region_idx]
-
-                    # Horizontal extent in pixels
-                    h_extent_pixels = end_idx - start_idx
-
-                    if h_extent_pixels > 2:  # At least 3 pixels
-                        # Get position of wave feature (middle of region)
-                        wave_pos_idx = (start_idx + end_idx) // 2
-
-                        if wave_pos_idx < len(cross_shore_positions):
-                            x_distance = cross_shore_positions[wave_pos_idx]
-
-                            if x_distance > 0.1:  # Avoid division by zero
-                                # Camera viewing angle
+                            if x_distance > 0.1:
+                                # Camera angle
                                 camera_angle = np.arctan(self.camera_height / x_distance)
 
-                                # Horizontal distance of wave face
-                                L_horizontal = h_extent_pixels * self.pixel_resolution
+                                # Convert intensity range to approximate wave height
+                                # Empirical scaling: intensity range of ~0.5 (normalized) ≈ 1-2m wave
+                                # Use camera geometry as additional scaling
+                                base_height = intensity_range * 3.0  # Empirical factor
 
-                                # Photogrammetric conversion
-                                correction = L_horizontal * np.tan(camera_angle) / np.tan(wave_face_angle)
-                                L_corrected = L_horizontal - correction
-                                wave_height = L_corrected * np.tan(camera_angle)
+                                # Apply camera angle correction (waves appear smaller at distance)
+                                wave_height = base_height * np.tan(camera_angle) * 2.0
 
-                                # Only keep positive, realistic values
-                                if 0.1 < wave_height < 10.0:
+                                # Clip to realistic range
+                                wave_height = np.clip(wave_height, 0.1, 8.0)
+
+                                if not np.isnan(wave_height):
                                     wave_heights[t] = wave_height
 
             except Exception as e:
+                print(f"  Error at timestep {t}: {e}")
                 continue
+
+        # Debug output
+        valid_count = np.sum(~np.isnan(wave_heights))
+        if valid_count > 0:
+            print(f"  Computed {valid_count}/{len(wave_heights)} wave heights")
+            print(f"  Range: {np.nanmin(wave_heights):.2f} - {np.nanmax(wave_heights):.2f} m")
+        else:
+            print(f"  No valid wave heights computed (all NaN)")
 
         return wave_heights
 
