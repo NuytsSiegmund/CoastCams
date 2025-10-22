@@ -66,8 +66,8 @@ output_format: csv  # Output file format: 'csv', 'excel', or 'both'
 # ============================================================================
 # These paths are auto-detected if not specified
 # Relative paths are relative to the script location
-input_dir: Timestacks  # Input directory for timestack images
-output_dir: Output  # Output directory for results
+input_dir: ../Timestacks  # Input directory for timestack images
+output_dir: ../Output  # Output directory for results
 coordinate_file: null  # Optional coordinate transformation file
 
 # ============================================================================
