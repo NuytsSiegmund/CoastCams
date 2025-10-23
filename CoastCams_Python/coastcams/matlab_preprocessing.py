@@ -516,10 +516,14 @@ class PhotogrammetricHeightCalculator:
             wave_face_angle = np.deg2rad(35.0)
 
             # Camera angles for each breaking position (MATLAB line 402)
-            # AngleCam = arctan(camera_height / horizontal_distance)
+            # MATLAB: AngleCam = abs(z0./X1(PosX)) = height/distance = tan(angle_from_horizontal)
+            # But for photogrammetry, we need angle from vertical: 90° - angle_from_horizontal
+            # atan(height/distance) gives angle from horizontal, so angle from vertical is π/2 - that
             distances = cross_shore_positions[PosX]
             print(f"    Breaking wave distances from camera: min={np.min(distances):.1f}m, max={np.max(distances):.1f}m")
-            AngleCam = np.arctan(np.abs(self.camera_height / distances))
+            angle_from_horizontal = np.arctan(np.abs(self.camera_height / distances))
+            angle_from_vertical = np.pi/2 - angle_from_horizontal  # Convert to angle from vertical
+            tan_camera_angle = np.tan(angle_from_vertical)
 
             # Smooth roller lengths (MATLAB line 406)
             Lwi = np.nanmax(Lw, axis=0)
@@ -555,11 +559,13 @@ class PhotogrammetricHeightCalculator:
                         debug_count += 1
                         continue
 
-                    # Max - min along space for each time
-                    spatial_range = np.nanmax(window, axis=1) - np.nanmin(window, axis=1)
+                    # Max - min along TIME for each spatial position (MATLAB line 410)
+                    # This matches MATLAB: nanmax/nanmin operate on first dimension (time)
+                    # producing a spatial vector (one value per spatial column)
+                    temporal_range_per_space = np.nanmax(window, axis=0) - np.nanmin(window, axis=0)
 
                     # Smooth (MATLAB line 410)
-                    vec = filter_mean(filter_mean(spatial_range, 20), 5)
+                    vec = filter_mean(filter_mean(temporal_range_per_space, 20), 5)
 
                     if len(vec) < 3:
                         if debug_count < 3:
@@ -571,6 +577,9 @@ class PhotogrammetricHeightCalculator:
                     first_third_end = max(1, len(vec) // 3)
                     ngt = np.nanmax(vec[:first_third_end])
                     gft = np.nanargmax(vec[:first_third_end])
+
+                    if debug_count == 0:
+                        print(f"    [Wave {i}] Debug: vec length={len(vec)}, peak at index {gft}/{first_third_end}")
 
                     # Find extent of high intensity region (MATLAB lines 412-418)
                     threshold = np.nanmin(vec) + 0.5 * (np.nanmax(vec) - np.nanmin(vec))
@@ -590,25 +599,31 @@ class PhotogrammetricHeightCalculator:
                     else:
                         id_arr = np.array([ii[0], ii[-1]])
 
-                    # Find boundaries around peak
-                    idl = id_arr[id_arr < gft]
-                    idp = id_arr[id_arr > gft]
+                    if debug_count == 0:
+                        print(f"    [Wave {i}] Debug: {len(ii)} high points, {len(gaps)} gaps, id_arr={id_arr}")
 
-                    if len(idl) > 0 and len(idp) > 0:
-                        idl_end = idl[-1]
-                        idp_start = idp[0]
+                    # Find boundaries around peak (MATLAB lines 414-418)
+                    # In MATLAB: idl and idp are INDICES into id array, not values
+                    idl_indices = np.where(id_arr < gft)[0]
+                    idp_indices = np.where(id_arr > gft)[0]
 
-                        # Horizontal extent in pixels (MATLAB line 419)
-                        b = idp_start - idl_end
+                    if len(idl_indices) > 0 and len(idp_indices) > 0:
+                        idl = idl_indices[-1]  # Last index before peak
+                        idp = idp_indices[0]   # First index after peak
+
+                        # Get the actual values from id_arr
+                        # MATLAB: b = length(id(idl):id(idp))
+                        # This is the range from id_arr[idl] to id_arr[idp]
+                        b = len(range(id_arr[idl], id_arr[idp] + 1))
                         L1_val = abs(b) * self.pixel_resolution
                         L1.append(L1_val)
 
                         if debug_count < 3:
-                            print(f"    [Wave {i}] SUCCESS: L1 = {L1_val:.3f}m (b={b} pixels)")
+                            print(f"    [Wave {i}] SUCCESS: L1 = {L1_val:.3f}m (b={b} pixels, id_arr[{idl}]={id_arr[idl]}, id_arr[{idp}]={id_arr[idp]})")
                         debug_count += 1
                     else:
                         if debug_count < 3:
-                            print(f"    [Wave {i}] Skipped: no boundaries around peak (idl={len(idl)}, idp={len(idp)})")
+                            print(f"    [Wave {i}] Skipped: no boundaries around peak (idl={len(idl_indices)}, idp={len(idp_indices)})")
                         debug_count += 1
 
                 except Exception as e:
@@ -627,11 +642,14 @@ class PhotogrammetricHeightCalculator:
             print(f"    L1 values: min={np.min(L1):.3f}, max={np.max(L1):.3f}, mean={np.mean(L1):.3f}")
 
             # Photogrammetric conversion (MATLAB lines 425-426)
-            median_angle = np.nanmean(AngleCam)
-            print(f"    Camera angles: median={median_angle:.6f} rad ({np.rad2deg(median_angle):.2f}°)")
+            # AngleCam is tan(angle), so we DON'T apply tan() again
+            # cor = L1 .* AngleCam / tan(AngleWaveFront)
+            # Lf = (L1 - cor) .* AngleCam
+            median_tan_angle = np.nanmean(tan_camera_angle)
+            print(f"    Camera tan(angle): median={median_tan_angle:.6f} (angle={np.rad2deg(np.arctan(median_tan_angle)):.2f}°)")
 
-            correction = L1 * np.tan(median_angle) / np.tan(wave_face_angle)
-            Lf = (L1 - correction) * np.tan(median_angle)
+            correction = L1 * median_tan_angle / np.tan(wave_face_angle)
+            Lf = (L1 - correction) * median_tan_angle
 
             print(f"    After photogrammetric conversion:")
             print(f"      Correction: min={np.min(correction):.3f}, max={np.max(correction):.3f}")
