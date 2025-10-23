@@ -10,6 +10,7 @@ from scipy import signal, interpolate
 from typing import Dict, Tuple, Optional, List
 from .utils import (local_maxima, compute_wave_energy, linear_wave_celerity,
                    calculate_depth_from_celerity)
+from .matlab_preprocessing import (RollerDetector, PhotogrammetricHeightCalculator)
 
 
 class WaveAnalyzer:
@@ -44,6 +45,13 @@ class WaveAnalyzer:
             self.max_period = 25.0  # seconds
             self.gravity = 9.81  # m/s^2
             self.camera_height = 27.24  # meters
+
+        # Initialize MATLAB-style processors
+        self.roller_detector = RollerDetector(dt=self.dt)
+        self.height_calculator = PhotogrammetricHeightCalculator(
+            camera_height=self.camera_height,
+            pixel_resolution=self.pixel_resolution
+        )
 
     def analyze_timestack(self, timestack: np.ndarray,
                          cross_shore_positions: np.ndarray,
@@ -156,26 +164,50 @@ class WaveAnalyzer:
         results['mean_Tm'] = mean_period
         results['wave_periods'] = np.full(len(cross_shore_positions), mean_period)
 
-        # Step 4: Compute wave height using photogrammetric method on full 2D timestack
-        # This matches MATLAB's BreakerHeight function
-        wave_height_photo = self._compute_wave_height_photogrammetric(
-            timestack, cross_shore_positions, median_break_idx
-        )
+        # Step 4: Use full MATLAB photogrammetric pipeline
+        # Detect breaking waves and compute heights
+        try:
+            print(f"  Running full MATLAB photogrammetric pipeline...")
 
-        if not np.isnan(wave_height_photo) and wave_height_photo > 0:
-            results['mean_Hs'] = wave_height_photo
-            results['mean_Hm'] = wave_height_photo * 0.7  # Approximate ratio
-            print(f"  Wave height (photogrammetric): Hs = {wave_height_photo:.3f}m")
-        else:
-            # Fallback: Use calibrated empirical relationship
-            # MATLAB Wave_Char.m uses Hs = 4 × std(detrended_intensity)
-            # For normalized intensity (0-1), typical relationship:
-            # - std of 0.05-0.15 corresponds to 0.3-1.5m waves
-            # Empirical calibration factor ~= 5-8 for coastal cameras
-            calibration_factor = 2.0  # Conservative factor (will be adjusted based on MATLAB comparison)
+            # Detect rollers and breaking waves
+            roller_results = self.roller_detector.detect_rollers(timestack)
+
+            PosX = roller_results['PosX']
+            PosT = roller_results['PosT']
+            Lw = roller_results['Lw']
+            B = roller_results['B']
+
+            if len(PosX) > 0:
+                # Calculate wave heights using photogrammetric method
+                Hs, Hm = self.height_calculator.calculate_wave_heights(
+                    B, PosT, PosX, Lw, cross_shore_positions
+                )
+
+                if not np.isnan(Hs) and Hs > 0:
+                    results['mean_Hs'] = Hs
+                    results['mean_Hm'] = Hm
+                    print(f"  Wave height (photogrammetric): Hs = {Hs:.3f}m, Hm = {Hm:.3f}m")
+                else:
+                    # Fallback to time series method
+                    calibration_factor = 2.0
+                    results['mean_Hs'] = Hs_from_ts * calibration_factor
+                    results['mean_Hm'] = results['mean_Hs'] * 0.7
+                    print(f"  Wave height (fallback - time series): Hs = {results['mean_Hs']:.3f}m")
+            else:
+                # No breaking waves detected, use fallback
+                print(f"  No breaking waves detected, using fallback method")
+                calibration_factor = 2.0
+                results['mean_Hs'] = Hs_from_ts * calibration_factor
+                results['mean_Hm'] = results['mean_Hs'] * 0.7
+                print(f"  Wave height (fallback): Hs = {results['mean_Hs']:.3f}m")
+
+        except Exception as e:
+            print(f"  Photogrammetric pipeline error: {e}")
+            # Fallback to time series method
+            calibration_factor = 2.0
             results['mean_Hs'] = Hs_from_ts * calibration_factor
             results['mean_Hm'] = results['mean_Hs'] * 0.7
-            print(f"  Wave height (time series method): Hs = {results['mean_Hs']:.3f}m (std-based)")
+            print(f"  Wave height (error fallback): Hs = {results['mean_Hs']:.3f}m")
 
         results['cross_shore_positions'] = cross_shore_positions
 
@@ -450,9 +482,13 @@ class WaveAnalyzer:
             # Step 1: Low-pass filter (removes periods < 1.5s)
             T_cutoff_low = 1.5  # seconds
             f_cutoff_low = 1.0 / T_cutoff_low  # Hz
-            numtaps = min(1001, len(S) // 3)  # Filter order (MATLAB uses 1000, but adapt to signal length)
+            numtaps = min(501, len(S) // 4)  # Filter order (reduce from MATLAB's 1000 to avoid filtfilt issues)
 
-            if numtaps < 3 or len(S) < numtaps:
+            # Ensure odd number of taps for FIR filter
+            if numtaps % 2 == 0:
+                numtaps += 1
+
+            if numtaps < 3 or len(S) < numtaps * 3:  # filtfilt needs 3x filter length
                 return None
 
             # Normalize cutoff frequency

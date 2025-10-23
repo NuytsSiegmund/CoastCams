@@ -2,7 +2,7 @@
 CoastCams Analysis Summary Report
 ======================================================================
 
-Analysis Date: 2025-10-23 02:54:59
+Analysis Date: 2025-10-23 03:30:45
 
 Configuration Parameters:
 ----------------------------------------------------------------------
@@ -12,9 +12,9 @@ Configuration Parameters:
 
 Analysis Results:
 ----------------------------------------------------------------------
-  Mean Significant Wave Height: 1.080 m
-  Mean Wave Period: 10.689 s
+  Mean Significant Wave Height: 0.784 m
+  Mean Wave Period: 8.542 s
   Mean Wave Celerity: 1.583 m/s
-  Mean Water Depth: 1.422 m
+  Mean Water Depth: 1.556 m
 
 ======================================================================
