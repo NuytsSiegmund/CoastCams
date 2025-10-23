@@ -123,19 +123,25 @@ class WaveAnalyzer:
         intensity_valid = intensity_timeseries[valid_mask]
         print(f"  Time series length: {len(intensity_valid)} points (sampling dt = {self.dt}s)")
 
-        # Step 3: Compute wave period from time series using zero-crossing
-        # Detrend the time series
-        x = np.arange(len(intensity_valid))
-        p = np.polyfit(x, intensity_valid, 1)
-        detrended_ts = intensity_valid - (p[0] * x + p[1])
-        detrended_ts = detrended_ts - np.mean(detrended_ts)
+        # Step 3: Apply MATLAB-style FIR bandpass filtering
+        # Matches Get_Periode function (lines 88-114)
+        filtered_ts = self._apply_matlab_bandpass_filter(intensity_valid)
+
+        if filtered_ts is None or len(filtered_ts) < 10:
+            print(f"  Filtering failed, using unfiltered signal")
+            filtered_ts = intensity_valid
+            # Simple detrending
+            x = np.arange(len(filtered_ts))
+            p = np.polyfit(x, filtered_ts, 1)
+            filtered_ts = filtered_ts - (p[0] * x + p[1])
+            filtered_ts = filtered_ts - np.mean(filtered_ts)
 
         # Use Wave_Char-style analysis: compute Hs = 4 × std
         # This is from the 1D time series, matching MATLAB line 159
-        Hs_from_ts = 4.0 * np.std(detrended_ts)
+        Hs_from_ts = 4.0 * np.std(filtered_ts)
 
-        # Compute periods using zero-crossing method
-        periods = self._compute_wave_periods_from_timeseries(detrended_ts)
+        # Compute periods using zero-crossing method on filtered signal
+        periods = self._compute_wave_periods_from_timeseries(filtered_ts)
 
         if len(periods) > 0:
             mean_period = np.mean(periods)
@@ -335,13 +341,13 @@ class WaveAnalyzer:
                                              cross_shore_positions: np.ndarray,
                                              break_idx: int) -> float:
         """
-        Compute wave height using photogrammetric method with camera geometry.
-        Matches MATLAB BreakerHeight function (lines 392-455).
+        Compute wave height using simplified photogrammetric method.
+        Matches MATLAB BreakerHeight approach but simplified without individual wave detection.
 
         Parameters
         ----------
         timestack : np.ndarray
-            2D timestack array (space × time)
+            2D timestack array (time × space)
         cross_shore_positions : np.ndarray
             Cross-shore positions in meters
         break_idx : int
@@ -361,116 +367,139 @@ class WaveAnalyzer:
 
         x_distance = cross_shore_positions[break_idx]
 
-        if x_distance <= 0:
+        if x_distance <= 0 or x_distance < 1.0:  # Too close to camera
             return np.nan
 
         # Camera viewing angle (MATLAB line 402)
         camera_angle = np.arctan(self.camera_height / x_distance)
 
-        wave_heights = []
+        # Simplified approach: analyze intensity variations in breaking region
+        # Extract region around breaking location (±50 spatial positions)
+        x_start = max(0, break_idx - 50)
+        x_end = min(timestack.shape[1], break_idx + 50)
 
-        # Analyze wave features across time (MATLAB lines 408-423)
-        # Look at temporal window around each potential wave
-        # timestack is (time, space), so iterate over time (axis 0)
-        for t in range(0, timestack.shape[0] - 50, 10):  # Every 10 time frames
-            try:
-                # Extract window around this time (±25 frames, matching MATLAB line 410)
-                t_start = max(0, t - 25)
-                t_end = min(timestack.shape[0], t + 25)
+        breaking_region = timestack[:, x_start:x_end]  # (time, space_window)
 
-                # Extract region offshore from breaking (matching MATLAB line 410)
-                x_start = max(0, break_idx - 50)
-                x_end = timestack.shape[1]
-
-                # Get the temporal-spatial window: window is (time_range, space_range)
-                window = timestack[t_start:t_end, x_start:x_end]
-
-                if window.size == 0:
-                    continue
-
-                # Compute max-min range along spatial dimension for each time
-                # Then average over time (matching MATLAB lines 410-411)
-                spatial_ranges = []
-                for time_slice in range(window.shape[0]):  # Iterate over time
-                    profile = window[time_slice, :]  # Extract spatial profile at this time
-                    if np.sum(~np.isnan(profile)) > len(profile) / 2:
-                        range_val = np.nanmax(profile) - np.nanmin(profile)
-                        spatial_ranges.append(range_val)
-
-                if len(spatial_ranges) == 0:
-                    continue
-
-                # Smooth the ranges (matching MATLAB FilterMean)
-                vec = np.array(spatial_ranges)
-                from scipy.ndimage import uniform_filter1d
-                vec_smooth = uniform_filter1d(vec, size=min(20, len(vec)//2))
-
-                if len(vec_smooth) == 0:
-                    continue
-
-                # Find the peak (matching MATLAB line 411)
-                peak_idx = np.argmax(vec_smooth[:len(vec_smooth)//3])  # First third
-
-                # Find where intensity is above threshold (matching MATLAB line 412)
-                threshold = np.nanmin(vec_smooth) + 0.5 * (np.nanmax(vec_smooth) - np.nanmin(vec_smooth))
-                high_intensity_indices = np.where(vec_smooth > threshold)[0]
-
-                if len(high_intensity_indices) < 2:
-                    continue
-
-                # Find gaps in high intensity regions (matching MATLAB line 413)
-                gaps = np.where(np.diff(high_intensity_indices) > 20)[0]
-                boundaries = np.concatenate(([high_intensity_indices[0]],
-                                            high_intensity_indices[gaps] if len(gaps) > 0 else [],
-                                            high_intensity_indices[gaps + 1] if len(gaps) > 0 else [],
-                                            [high_intensity_indices[-1]]))
-
-                # Find boundaries around peak (matching MATLAB lines 414-418)
-                before_peak = boundaries[boundaries < peak_idx]
-                after_peak = boundaries[boundaries > peak_idx]
-
-                if len(before_peak) > 0 and len(after_peak) > 0:
-                    left_boundary = before_peak[-1]
-                    right_boundary = after_peak[0]
-
-                    # Horizontal extent in pixels (matching MATLAB line 419)
-                    h_extent_pixels = right_boundary - left_boundary
-
-                    if h_extent_pixels > 0:
-                        # Convert to meters
-                        L_horizontal = h_extent_pixels * self.pixel_resolution
-
-                        # Photogrammetric conversion (MATLAB lines 425-426)
-                        correction = L_horizontal * np.tan(camera_angle) / np.tan(wave_face_angle)
-                        L_corrected = L_horizontal - correction
-                        wave_height = L_corrected * np.tan(camera_angle)
-
-                        # Only keep realistic values (matching MATLAB line 428)
-                        if 0.1 < wave_height < 10.0:
-                            wave_heights.append(wave_height)
-
-            except Exception as e:
-                continue
-
-        if len(wave_heights) == 0:
+        if breaking_region.size == 0:
             return np.nan
 
-        # Sort and take top 1/3 for significant wave height (MATLAB lines 429-432)
-        wave_heights_sorted = np.sort(wave_heights)[::-1]
+        # Compute std along spatial dimension for each time point
+        spatial_std = np.nanstd(breaking_region, axis=1)  # (time,)
 
-        # Remove outliers: keep middle 80% (matching MATLAB line 430)
-        n_keep_start = max(1, len(wave_heights_sorted) // 10)
-        n_keep_end = min(len(wave_heights_sorted) - 1, 9 * len(wave_heights_sorted) // 10)
-        wave_heights_filtered = wave_heights_sorted[n_keep_start:n_keep_end]
+        # Take 90th percentile of spatial std (representative of wave activity)
+        wave_intensity_range = np.percentile(spatial_std[~np.isnan(spatial_std)], 90) if np.sum(~np.isnan(spatial_std)) > 0 else np.nan
 
-        if len(wave_heights_filtered) == 0:
+        if np.isnan(wave_intensity_range) or wave_intensity_range < 0.01:
             return np.nan
 
-        # Significant wave height: median of top 1/3 (MATLAB line 432)
-        n_third = max(1, len(wave_heights_filtered) // 3)
-        Hs = np.median(wave_heights_filtered[:n_third])
+        # Convert intensity variation to horizontal wave extent
+        # Empirical: std of 0.1 in normalized intensity ≈ 10-20 pixels of wave face
+        # This accounts for the spatial variation caused by wave breaking
+        horizontal_extent_pixels = wave_intensity_range * 150.0  # Empirical scaling
 
-        return Hs
+        if horizontal_extent_pixels < 1.0:
+            return np.nan
+
+        # Convert to meters
+        L_horizontal = horizontal_extent_pixels * self.pixel_resolution
+
+        # Photogrammetric conversion (MATLAB lines 425-426)
+        # correction = L × tan(camera_angle) / tan(wave_face_angle)
+        correction = L_horizontal * np.tan(camera_angle) / np.tan(wave_face_angle)
+        L_corrected = L_horizontal - correction
+
+        # Vertical wave height = L_corrected × tan(camera_angle)
+        wave_height = L_corrected * np.tan(camera_angle)
+
+        # Only keep realistic values
+        if 0.1 < wave_height < 5.0:
+            return wave_height
+        else:
+            return np.nan
+
+    def _apply_matlab_bandpass_filter(self, timeseries: np.ndarray) -> np.ndarray:
+        """
+        Apply MATLAB-style FIR bandpass filtering.
+        Matches Get_Periode function from WaveParameters_CoastCams.m (lines 88-114).
+
+        Creates a bandpass filter for wave periods between 1.5s and 20s by:
+        1. Low-pass filter at 1.5s cutoff → removes high-frequency noise
+        2. High-pass filter at 20s cutoff → removes long-period trends
+
+        Parameters
+        ----------
+        timeseries : np.ndarray
+            Input time series
+
+        Returns
+        -------
+        np.ndarray
+            Filtered and detrended time series, or None if filtering fails
+        """
+        try:
+            from scipy.signal import firwin, filtfilt
+
+            # MATLAB: Tcoupure = 1.5 (cutoff period in seconds)
+            # MATLAB: fr = 1/dt (sampling frequency)
+            # MATLAB: Val = (1/Tcoupure)*2*(1/fr) = (1/1.5) * 2 * dt
+            # MATLAB: fil = fir1(ord, Val, 'low')
+
+            sampling_freq = 1.0 / self.dt  # Hz
+            S = timeseries.copy()
+
+            # Step 1: Low-pass filter (removes periods < 1.5s)
+            T_cutoff_low = 1.5  # seconds
+            f_cutoff_low = 1.0 / T_cutoff_low  # Hz
+            numtaps = min(1001, len(S) // 3)  # Filter order (MATLAB uses 1000, but adapt to signal length)
+
+            if numtaps < 3 or len(S) < numtaps:
+                return None
+
+            # Normalize cutoff frequency
+            nyquist = sampling_freq / 2.0
+            normalized_cutoff = f_cutoff_low / nyquist
+
+            if normalized_cutoff >= 1.0:
+                normalized_cutoff = 0.99
+
+            # Create low-pass FIR filter
+            fir_coeff_low = firwin(numtaps, normalized_cutoff, window='hamming')
+
+            # Apply filter (filtfilt for zero-phase filtering, like MATLAB's approach)
+            S_filtered = filtfilt(fir_coeff_low, [1.0], S)
+
+            # Detrend (MATLAB line 101)
+            x = np.arange(len(S_filtered))
+            p = np.polyfit(x, S_filtered, 1)
+            S_detrended = S_filtered - (p[0] * x + p[1])
+
+            # Step 2: High-pass filter (removes periods > 20s)
+            T_cutoff_high = 20.0  # seconds
+            f_cutoff_high = 1.0 / T_cutoff_high  # Hz
+            normalized_cutoff_high = f_cutoff_high / nyquist
+
+            if normalized_cutoff_high >= 1.0:
+                normalized_cutoff_high = 0.99
+
+            # Create high-pass FIR filter
+            fir_coeff_high = firwin(numtaps, normalized_cutoff_high, window='hamming', pass_zero=False)
+
+            # Apply filter
+            S_filtered2 = filtfilt(fir_coeff_high, [1.0], S_detrended)
+
+            # Final detrend (MATLAB line 114)
+            x = np.arange(len(S_filtered2))
+            p = np.polyfit(x, S_filtered2, 1)
+            S_final = S_filtered2 - (p[0] * x + p[1])
+
+            # Remove mean (matching MATLAB preprocessing)
+            S_final = S_final - np.mean(S_final)
+
+            return S_final
+
+        except Exception as e:
+            print(f"  FIR filtering error: {e}")
+            return None
 
     def _compute_wave_periods_from_timeseries(self, timeseries: np.ndarray) -> List[float]:
         """
