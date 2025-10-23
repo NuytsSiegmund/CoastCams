@@ -22,7 +22,7 @@ class MATLABPreprocessor:
     Implements the preprocessing pipeline from WaveParameters_CoastCams.m
     """
 
-    def __init__(self, dt: float = 0.5, use_radon: bool = False):
+    def __init__(self, dt: float = 0.5, use_radon: bool = True):
         """
         Initialize preprocessor.
 
@@ -31,7 +31,7 @@ class MATLABPreprocessor:
         dt : float
             Temporal resolution (sampling period) in seconds
         use_radon : bool
-            Whether to apply Radon transform (slow but more accurate)
+            Whether to apply Radon transform (slower but more accurate wave separation)
         """
         self.dt = dt
         self.use_radon = use_radon
@@ -516,7 +516,10 @@ class PhotogrammetricHeightCalculator:
             wave_face_angle = np.deg2rad(35.0)
 
             # Camera angles for each breaking position (MATLAB line 402)
-            AngleCam = np.abs(self.camera_height / cross_shore_positions[PosX])
+            # AngleCam = arctan(camera_height / horizontal_distance)
+            distances = cross_shore_positions[PosX]
+            print(f"    Breaking wave distances from camera: min={np.min(distances):.1f}m, max={np.max(distances):.1f}m")
+            AngleCam = np.arctan(np.abs(self.camera_height / distances))
 
             # Smooth roller lengths (MATLAB line 406)
             Lwi = np.nanmax(Lw, axis=0)
@@ -529,9 +532,10 @@ class PhotogrammetricHeightCalculator:
             Lwi_smooth = uniform_filter1d(Lwi, size=min(80, len(Lwi) // 10), mode='nearest')
 
             L1 = []
+            debug_count = 0
 
             # Analyze each breaking wave (MATLAB lines 408-423)
-            for i in range(len(PosT)):
+            for i in range(min(10, len(PosT))):  # Debug: only first 10 waves
                 try:
                     t = PosT[i]
                     x = PosX[i]
@@ -546,6 +550,9 @@ class PhotogrammetricHeightCalculator:
                     window = B[t_start:t_end, x_start:x_end]
 
                     if window.size == 0:
+                        if debug_count < 3:
+                            print(f"    [Wave {i}] Skipped: empty window")
+                        debug_count += 1
                         continue
 
                     # Max - min along space for each time
@@ -555,6 +562,9 @@ class PhotogrammetricHeightCalculator:
                     vec = filter_mean(filter_mean(spatial_range, 20), 5)
 
                     if len(vec) < 3:
+                        if debug_count < 3:
+                            print(f"    [Wave {i}] Skipped: vec too short ({len(vec)})")
+                        debug_count += 1
                         continue
 
                     # Find peak in first third (MATLAB line 411)
@@ -567,6 +577,9 @@ class PhotogrammetricHeightCalculator:
                     ii = np.where(vec > threshold)[0]
 
                     if len(ii) < 2:
+                        if debug_count < 3:
+                            print(f"    [Wave {i}] Skipped: not enough high intensity points ({len(ii)})")
+                        debug_count += 1
                         continue
 
                     # Find boundaries with gaps
@@ -590,23 +603,46 @@ class PhotogrammetricHeightCalculator:
                         L1_val = abs(b) * self.pixel_resolution
                         L1.append(L1_val)
 
+                        if debug_count < 3:
+                            print(f"    [Wave {i}] SUCCESS: L1 = {L1_val:.3f}m (b={b} pixels)")
+                        debug_count += 1
+                    else:
+                        if debug_count < 3:
+                            print(f"    [Wave {i}] Skipped: no boundaries around peak (idl={len(idl)}, idp={len(idp)})")
+                        debug_count += 1
+
                 except Exception as e:
+                    if debug_count < 3:
+                        print(f"    [Wave {i}] Exception: {e}")
+                    debug_count += 1
                     continue
 
+            print(f"    Analyzed {min(10, len(PosT))} waves, found {len(L1)} valid L1 values")
+
             if len(L1) == 0:
+                print(f"    No L1 values found - returning NaN")
                 return np.nan, np.nan
 
             L1 = np.array(L1)
+            print(f"    L1 values: min={np.min(L1):.3f}, max={np.max(L1):.3f}, mean={np.mean(L1):.3f}")
 
             # Photogrammetric conversion (MATLAB lines 425-426)
             median_angle = np.nanmean(AngleCam)
+            print(f"    Camera angles: median={median_angle:.6f} rad ({np.rad2deg(median_angle):.2f}°)")
+
             correction = L1 * np.tan(median_angle) / np.tan(wave_face_angle)
             Lf = (L1 - correction) * np.tan(median_angle)
 
+            print(f"    After photogrammetric conversion:")
+            print(f"      Correction: min={np.min(correction):.3f}, max={np.max(correction):.3f}")
+            print(f"      Lf: min={np.min(Lf):.3f}, max={np.max(Lf):.3f}")
+
             # Filter valid heights (MATLAB line 428)
             ind = np.where((Lf > 0) & ~np.isnan(Lf))[0]
+            print(f"    Valid heights after filtering: {len(ind)}/{len(Lf)}")
 
             if len(ind) == 0:
+                print(f"    No valid heights - returning NaN")
                 return np.nan, np.nan
 
             # Sort and remove outliers (MATLAB line 429-430)
