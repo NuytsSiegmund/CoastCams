@@ -284,17 +284,24 @@ class CoastCamsWorkflow:
         wave_periods = [r['wave_period'] for r in all_results]
         wave_celerities = [r['wave_celerity'] for r in all_results]
         water_depths = [r['water_depth'] for r in all_results]
-        slas = [r['sla'] for r in all_results]
+
+        # Recompute SLA using global mean shoreline position
+        shoreline_array = np.array(shorelines)
+        global_mean_shoreline = np.nanmean(shoreline_array)
+        slas = shoreline_array - global_mean_shoreline  # SLA = deviation from mean
+
+        print(f"Global mean shoreline position: {global_mean_shoreline:.2f} m")
+        print(f"SLA range: {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
 
         # Store in results dictionary
         self.results = {
             'timestamps': timestamps,
-            'shoreline_positions': np.array(shorelines),
+            'shoreline_positions': shoreline_array,
             'wave_heights_timeseries': np.array(wave_heights),
             'wave_periods_timeseries': np.array(wave_periods),
             'celerities': np.array(wave_celerities),
             'depths': np.array(water_depths),
-            'sla_values': np.array(slas),
+            'sla_values': slas,
             # Aggregate statistics
             'mean_Hs': np.nanmean(wave_heights),
             'mean_Tm': np.nanmean(wave_periods),
@@ -495,12 +502,13 @@ class CoastCamsWorkflow:
             self.visualizer.plot_timestack(self.results['timestack'])
 
         # Plot wave parameters
-        if 'mean_Hs' in self.results and len(timestamps) > 0:
+        if 'wave_heights_timeseries' in self.results and len(timestamps) > 0:
             print("Plotting wave parameters...")
-            wave_heights = np.full(len(timestamps), self.results['mean_Hs'])
-            wave_periods = np.full(len(timestamps), self.results.get('mean_Tm', np.nan))
+            wave_heights = self.results['wave_heights_timeseries']
+            wave_periods = self.results['wave_periods_timeseries']
+            wave_celerities = self.results.get('celerities', None)
 
-            self.visualizer.plot_wave_parameters(timestamps, wave_heights, wave_periods)
+            self.visualizer.plot_wave_parameters(timestamps, wave_heights, wave_periods, wave_celerities)
 
         # Plot bathymetry
         if 'depths_smoothed' in self.results and 'cross_shore_positions' in self.results:
