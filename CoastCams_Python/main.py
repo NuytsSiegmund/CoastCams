@@ -223,8 +223,9 @@ class CoastCamsWorkflow:
         dict
             Wave analysis results
         """
-        # Create cross-shore position array
-        num_positions = timestack.shape[0]
+        # Create cross-shore position array (spatial dimension)
+        # Timestack shape: (time, space) = (1680, 689)
+        num_positions = timestack.shape[1]  # Use SPACE dimension (689), not time (1680)
         cross_shore_positions = np.arange(num_positions) * self.config.pixel_resolution
 
         # Analyze this timestack
