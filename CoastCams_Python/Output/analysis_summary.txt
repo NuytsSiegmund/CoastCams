@@ -1,0 +1,20 @@
+======================================================================
+CoastCams Analysis Summary Report
+======================================================================
+
+Analysis Date: 2025-10-24 01:14:40
+
+Configuration Parameters:
+----------------------------------------------------------------------
+  Camera Height: 27.240 m
+  Pixel Resolution: 0.100 m/pixel
+  Shoreline Method: 1
+
+Analysis Results:
+----------------------------------------------------------------------
+  Mean Significant Wave Height: 50.743 m
+  Mean Wave Period: 10.689 s
+  Mean Wave Celerity: 1.583 m/s
+  Mean Water Depth: 1.422 m
+
+======================================================================
