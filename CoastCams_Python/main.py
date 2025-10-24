@@ -155,6 +155,9 @@ class CoastCamsWorkflow:
                 'wave_celerity': correlation_results.get('mean_celerity', np.nan),
                 'water_depth': bathymetry_results.get('mean_depth', np.nan),
                 'sla': sla,
+                # Store full bathymetry profile for averaging
+                'depth_profile': bathymetry_results.get('depths_smoothed', None),
+                'cross_shore_positions': bathymetry_results.get('cross_shore_positions', None),
             }
             all_results.append(result)
 
@@ -286,12 +289,56 @@ class CoastCamsWorkflow:
         water_depths = [r['water_depth'] for r in all_results]
 
         # Recompute SLA using global mean shoreline position
+        # Convert horizontal shoreline position changes to vertical elevation changes
         shoreline_array = np.array(shorelines)
         global_mean_shoreline = np.nanmean(shoreline_array)
-        slas = shoreline_array - global_mean_shoreline  # SLA = deviation from mean
+
+        # Horizontal deviation from mean (meters)
+        horizontal_deviation = shoreline_array - global_mean_shoreline
+
+        # Estimate beach slope from bathymetry data
+        # Beach slope ≈ average depth / average distance
+        valid_depths = [d for d in water_depths if not np.isnan(d) and d > 0]
+        valid_shorelines = [s for s, d in zip(shorelines, water_depths) if not np.isnan(d) and d > 0]
+
+        if len(valid_depths) > 0 and len(valid_shorelines) > 0:
+            # Estimate slope from depth/distance relationship
+            mean_depth = np.mean(valid_depths)
+            mean_distance = np.mean(valid_shorelines)
+            beach_slope = mean_depth / mean_distance if mean_distance > 0 else 0.03
+        else:
+            beach_slope = 0.03  # Default 3% slope for sandy beaches
+
+        # Convert horizontal deviation to vertical SLA using beach slope
+        # SLA = -horizontal_deviation × beach_slope
+        # Negative because moving seaward (increasing distance) = lower tide
+        slas = -horizontal_deviation * beach_slope
 
         print(f"Global mean shoreline position: {global_mean_shoreline:.2f} m")
+        print(f"Estimated beach slope: {beach_slope:.4f} ({beach_slope*100:.2f}%)")
         print(f"SLA range: {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
+
+        # Compute averaged bathymetry profile across all timestacks
+        depth_profiles = [r['depth_profile'] for r in all_results if r['depth_profile'] is not None]
+        cross_shore_pos = [r['cross_shore_positions'] for r in all_results if r['cross_shore_positions'] is not None]
+
+        if len(depth_profiles) > 0:
+            # Find common cross-shore positions (use first non-None as reference)
+            reference_positions = cross_shore_pos[0]
+
+            # Stack all depth profiles and average
+            # Handle different lengths by padding or truncating
+            min_length = min(len(profile) for profile in depth_profiles)
+            depth_profiles_trimmed = [profile[:min_length] for profile in depth_profiles]
+
+            averaged_depth_profile = np.nanmean(depth_profiles_trimmed, axis=0)
+            bathymetry_positions = reference_positions[:min_length]
+
+            print(f"Averaged bathymetry profile: {len(averaged_depth_profile)} points")
+            print(f"  Depth range: {np.nanmin(averaged_depth_profile):.2f} to {np.nanmax(averaged_depth_profile):.2f} m")
+        else:
+            averaged_depth_profile = np.array([])
+            bathymetry_positions = np.array([])
 
         # Store in results dictionary
         self.results = {
@@ -300,8 +347,12 @@ class CoastCamsWorkflow:
             'wave_heights_timeseries': np.array(wave_heights),
             'wave_periods_timeseries': np.array(wave_periods),
             'celerities': np.array(wave_celerities),
-            'depths': np.array(water_depths),
+            'depths': np.array(water_depths),  # Mean depth per timestack
             'sla_values': slas,
+            'beach_slope': beach_slope,
+            # Averaged bathymetry profile
+            'depths_smoothed': averaged_depth_profile,
+            'cross_shore_positions': bathymetry_positions,
             # Aggregate statistics
             'mean_Hs': np.nanmean(wave_heights),
             'mean_Tm': np.nanmean(wave_periods),

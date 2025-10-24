@@ -327,13 +327,13 @@ class CoastCamsVisualizer:
             ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
             plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45)
 
-        # 4. Bathymetry
-        if 'depths' in results and 'cross_shore_positions' in results:
+        # 4. Bathymetry (averaged profile across timestacks)
+        if 'depths_smoothed' in results and 'cross_shore_positions' in results:
             ax4 = fig.add_subplot(gs[2, 0])
-            ax4.plot(results['cross_shore_positions'], -results['depths'],
-                    'b-', linewidth=2)
+            ax4.plot(results['cross_shore_positions'], -results['depths_smoothed'],
+                    'b-', linewidth=2, marker='o')
             ax4.axhline(y=0, color='cyan', linestyle='--', linewidth=1.5, alpha=0.7)
-            ax4.set_title('Bathymetry Profile', fontsize=12, fontweight='bold')
+            ax4.set_title('Averaged Bathymetry Profile', fontsize=12, fontweight='bold')
             ax4.set_xlabel('Cross-shore Distance (m)')
             ax4.set_ylabel('Elevation (m)')
             ax4.grid(True, alpha=0.3)
