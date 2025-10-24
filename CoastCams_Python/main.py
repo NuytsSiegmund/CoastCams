@@ -293,21 +293,25 @@ class CoastCamsWorkflow:
         shoreline_array = np.array(shorelines)
         global_mean_shoreline = np.nanmean(shoreline_array)
 
-        # Horizontal deviation from mean (meters)
-        horizontal_deviation = shoreline_array - global_mean_shoreline
-
-        # Estimate beach slope from bathymetry data
-        # Beach slope ≈ average depth / average distance
-        valid_depths = [d for d in water_depths if not np.isnan(d) and d > 0]
-        valid_shorelines = [s for s, d in zip(shorelines, water_depths) if not np.isnan(d) and d > 0]
-
-        if len(valid_depths) > 0 and len(valid_shorelines) > 0:
-            # Estimate slope from depth/distance relationship
-            mean_depth = np.mean(valid_depths)
-            mean_distance = np.mean(valid_shorelines)
-            beach_slope = mean_depth / mean_distance if mean_distance > 0 else 0.03
+        # Smooth shoreline positions to extract tidal component (remove wave runup)
+        # Use simple moving average over ~1 hour window (4 timestacks at 15min intervals)
+        from scipy.ndimage import uniform_filter1d
+        window_size = min(4, len(shoreline_array) // 2)  # 1-hour window or half the data
+        if window_size > 1:
+            # Pad edges to avoid boundary effects
+            padded = np.pad(shoreline_array, (window_size, window_size), mode='edge')
+            smoothed_shoreline = uniform_filter1d(padded, size=window_size, mode='nearest')
+            smoothed_shoreline = smoothed_shoreline[window_size:-window_size]
         else:
-            beach_slope = 0.03  # Default 3% slope for sandy beaches
+            smoothed_shoreline = shoreline_array
+
+        # Horizontal deviation from mean (meters) - using smoothed data for tidal signal
+        horizontal_deviation = smoothed_shoreline - global_mean_shoreline
+
+        # Use a realistic beach slope for sandy beaches
+        # Typical beach slopes: 1-5% for sandy beaches, 5-20% for gravel/cobble
+        # Use conservative 2% slope (1:50)
+        beach_slope = 0.02
 
         # Convert horizontal deviation to vertical SLA using beach slope
         # SLA = -horizontal_deviation × beach_slope
@@ -315,7 +319,9 @@ class CoastCamsWorkflow:
         slas = -horizontal_deviation * beach_slope
 
         print(f"Global mean shoreline position: {global_mean_shoreline:.2f} m")
-        print(f"Estimated beach slope: {beach_slope:.4f} ({beach_slope*100:.2f}%)")
+        print(f"Beach slope: {beach_slope:.4f} ({beach_slope*100:.2f}%)")
+        print(f"Shoreline range (raw): {np.nanmin(shoreline_array):.1f} to {np.nanmax(shoreline_array):.1f} m")
+        print(f"Shoreline range (smoothed): {np.nanmin(smoothed_shoreline):.1f} to {np.nanmax(smoothed_shoreline):.1f} m")
         print(f"SLA range: {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
 
         # Compute averaged bathymetry profile across all timestacks
@@ -411,28 +417,44 @@ class CoastCamsWorkflow:
         return correlation_results
 
     def _estimate_bathymetry(self, wave_results, correlation_results):
-        """Estimate bathymetry from wave data."""
-        # Extract wave parameters
-        wave_periods = wave_results.get('wave_periods', np.array([]))
-        cross_shore_positions = wave_results.get('cross_shore_positions', np.array([]))
+        """Estimate bathymetry from wave data across full spatial domain."""
+        # Extract full spatial grid
+        cross_shore_positions_full = wave_results.get('cross_shore_positions', np.array([]))
+        num_positions = len(cross_shore_positions_full)
 
-        # Get celerities from correlation analysis
-        if 'celerities' in correlation_results:
-            celerities = correlation_results['celerities']
+        # Get sparse celerities from correlation analysis
+        if 'celerities' in correlation_results and len(correlation_results['celerities']) > 0:
+            celerities_sparse = correlation_results['celerities']
 
-            # Match lengths
-            min_len = min(len(wave_periods), len(celerities))
-            wave_periods = wave_periods[:min_len]
-            celerities = celerities[:min_len]
-            positions = cross_shore_positions[:min_len]
+            # Create position indices for sparse celerities (every 100 pixels by default)
+            spacing = self.correlation_analyzer.correlation_spacing
+            num_sparse_points = len(celerities_sparse)
+            sparse_indices = np.arange(0, num_sparse_points * spacing, spacing)
+
+            # Ensure we don't exceed the spatial domain
+            sparse_indices = sparse_indices[:num_sparse_points]
+
+            # Interpolate celerities to full spatial grid (matching MATLAB line 66)
+            from scipy.interpolate import interp1d
+            if len(sparse_indices) >= 2 and len(celerities_sparse) >= 2:  # Need at least 2 points
+                interp_func = interp1d(sparse_indices, celerities_sparse,
+                                       kind='linear', bounds_error=False, fill_value='extrapolate')
+                celerities_full = interp_func(np.arange(num_positions))
+                celerities_full = np.abs(celerities_full)  # Ensure positive
+            else:
+                # Fall back to constant value if not enough points
+                celerities_full = np.full(num_positions, np.nanmean(celerities_sparse))
         else:
-            # Estimate celerities from wave periods
-            positions = cross_shore_positions
-            celerities = np.array([5.0] * len(wave_periods))  # Default estimate
+            # Estimate celerities from wave periods if correlation failed
+            celerities_full = np.full(num_positions, 5.0)  # Default estimate
 
-        # Estimate depth profile
+        # Use mean wave period for all positions (matching MATLAB approach)
+        mean_period = wave_results.get('mean_Tm', 8.0)
+        wave_periods_full = np.full(num_positions, mean_period)
+
+        # Estimate depth profile across full spatial domain
         bathymetry_results = self.bathymetry_estimator.estimate_depth_profile(
-            wave_periods, celerities, positions
+            wave_periods_full, celerities_full, cross_shore_positions_full
         )
 
         return bathymetry_results
