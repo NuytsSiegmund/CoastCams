@@ -1,7 +1,20 @@
-CoastCams Analysis Summary
+======================================================================
+CoastCams Analysis Summary Report
+======================================================================
 
-Analysis Date: 27-Aug-2024 12:56:39
-Number of Images Processed: 16
-Time Range: 13-Oct-2021 07:45:00 to 13-Oct-2021 11:30:00
-Mean Significant Wave Height: 5.48 m
-Mean Peak Wave Period: 12.39 s
+Analysis Date: 2025-10-26 22:02:07
+
+Configuration Parameters:
+----------------------------------------------------------------------
+  Camera Height: 27.240 m
+  Pixel Resolution: 0.100 m/pixel
+  Shoreline Method: 1
+
+Analysis Results:
+----------------------------------------------------------------------
+  Mean Significant Wave Height: 1.080 m
+  Mean Wave Period: 10.689 s
+  Mean Wave Celerity: 1.583 m/s
+  Mean Water Depth: 1.422 m
+
+======================================================================

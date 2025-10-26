@@ -10,6 +10,7 @@ from scipy import signal, interpolate
 from typing import Dict, Tuple, Optional, List
 from .utils import (local_maxima, compute_wave_energy, linear_wave_celerity,
                    calculate_depth_from_celerity)
+from .roller_detection import roller_properties_taller
 
 
 class WaveAnalyzer:
@@ -150,16 +151,49 @@ class WaveAnalyzer:
         results['mean_Tm'] = mean_period
         results['wave_periods'] = np.full(len(cross_shore_positions), mean_period)
 
-        # Step 4: Compute wave height
-        # NOTE: Photogrammetric method disabled - requires RollerPropertiesTaller implementation
-        # See PYTHON_ISSUES_AND_FIXES.md for details
+        # Step 4: Compute wave height using RollerPropertiesTaller + BreakerHeight
+        # This now properly implements the MATLAB workflow
+        try:
+            # Detect wave breaking events
+            print(f"  Detecting wave breaking events...")
+            PosX, PosT, Lw, B_processed, Breakstd, Breakmean1, Breakmean2 = roller_properties_taller(
+                timestack, self.dt
+            )
 
-        # Use time series standard deviation method
-        # MATLAB Wave_Char.m uses Hs = 4 × std(detrended_intensity)
-        calibration_factor = 2.0  # Will need proper calibration or physics-based approach
-        results['mean_Hs'] = Hs_from_ts * calibration_factor
-        results['mean_Hm'] = results['mean_Hs'] * 0.7
-        print(f"  Wave height (time series method): Hs = {results['mean_Hs']:.3f}m (std-based)")
+            print(f"  Found {len(PosX)} breaking events")
+
+            if len(PosX) > 0 and not np.any(np.isnan(PosX)):
+                # Compute wave height using photogrammetric method
+                print(f"  Computing photogrammetric wave height for {len(PosX)} events...")
+                hs, hm = self._breaker_height(
+                    B_processed, PosT, PosX, Lw,
+                    cross_shore_positions, self.pixel_resolution
+                )
+
+                print(f"  Photogrammetric result: hs={hs}, hm={hm}")
+
+                if not np.isnan(hs) and hs > 0:
+                    results['mean_Hs'] = hs
+                    results['mean_Hm'] = hm
+                    print(f"  Wave height (photogrammetric): Hs = {hs:.3f}m, Hm = {hm:.3f}m")
+                else:
+                    # Fallback to time-series method
+                    results['mean_Hs'] = Hs_from_ts * 2.0
+                    results['mean_Hm'] = results['mean_Hs'] * 0.7
+                    print(f"  Wave height (time series fallback - photogrammetric returned NaN): Hs = {results['mean_Hs']:.3f}m")
+            else:
+                # No breaking events detected, use fallback
+                results['mean_Hs'] = Hs_from_ts * 2.0
+                results['mean_Hm'] = results['mean_Hs'] * 0.7
+                print(f"  Wave height (time series fallback): Hs = {results['mean_Hs']:.3f}m")
+
+        except Exception as e:
+            print(f"  Warning: Roller detection failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            results['mean_Hs'] = Hs_from_ts * 2.0
+            results['mean_Hm'] = results['mean_Hs'] * 0.7
+            print(f"  Wave height (time series fallback): Hs = {results['mean_Hs']:.3f}m")
 
         results['cross_shore_positions'] = cross_shore_positions
 
@@ -321,10 +355,159 @@ class WaveAnalyzer:
 
         return wave_heights
 
-    def _compute_wave_height_photogrammetric(self, timestack: np.ndarray,
+    def _breaker_height(self, B: np.ndarray, PosT: np.ndarray, PosX: np.ndarray,
+                       Lw: np.ndarray, X1: np.ndarray, dx: float) -> Tuple[float, float]:
+        """
+        Calculate wave height at breaking point using photogrammetric method.
+
+        Matches MATLAB BreakerHeight function (lines 392-455).
+
+        Parameters
+        ----------
+        B : np.ndarray
+            Preprocessed timestack (time × space)
+        PosT : np.ndarray
+            Temporal positions of breaking waves
+        PosX : np.ndarray
+            Spatial positions of breaking waves
+        Lw : np.ndarray
+            Roller lengths array
+        X1 : np.ndarray
+            Cross-shore positions in meters
+        dx : float
+            Spatial resolution (m/pixel)
+
+        Returns
+        -------
+        hs : float
+            Significant wave height (m)
+        hm : float
+            Mean wave height (m)
+        """
+        try:
+            # Wave face angle at breaking (MATLAB line 403)
+            AngleWaveFront = 35 * np.pi / 180
+
+            # Camera viewing angle tangent for each breaking position (MATLAB line 402)
+            # AngleCam = abs(z0./X1(PosX))
+            AngleCam = np.abs(self.camera_height / X1[PosX.astype(int)])
+
+            # Initialize wave height array
+            L1 = []
+
+            # Process each breaking event (MATLAB lines 408-423)
+            for i in range(len(PosT)):
+                try:
+                    # Extract window around this breaking event (±25 frames, offshore from break point)
+                    t_start = max(0, int(PosT[i]) - 25)
+                    t_end = min(B.shape[0], int(PosT[i]) + 25)
+                    x_start = max(0, int(PosX[i]) - 50)
+                    x_end = B.shape[1]
+
+                    window = B[t_start:t_end, x_start:x_end]
+
+                    if window.size == 0:
+                        L1.append(np.nan)
+                        continue
+
+                    # Compute max-min range along time for each spatial position
+                    # MATLAB: vec = FilterMean(FilterMean(nanmax(B(...)) - nanmin(B(...)), 20), 5)
+                    spatial_ranges = []
+                    for x_idx in range(window.shape[1]):
+                        ts = window[:, x_idx]
+                        if np.sum(~np.isnan(ts)) > len(ts) / 2:
+                            range_val = np.nanmax(ts) - np.nanmin(ts)
+                            spatial_ranges.append(range_val)
+                        else:
+                            spatial_ranges.append(np.nan)
+
+                    if len(spatial_ranges) == 0:
+                        L1.append(np.nan)
+                        continue
+
+                    vec = np.array(spatial_ranges)
+
+                    # Filter twice (MATLAB lines use FilterMean twice with windows 20 and 5)
+                    from .roller_detection import filter_mean
+                    vec = filter_mean(filter_mean(vec, 20), 5)
+
+                    # Find peak in first third (MATLAB line 411)
+                    peak_idx = np.argmax(vec[:len(vec) // 3])
+
+                    # Find high intensity regions (MATLAB line 412)
+                    threshold = np.nanmin(vec) + 0.5 * (np.nanmax(vec) - np.nanmin(vec))
+                    high_idx = np.where(vec > threshold)[0]
+
+                    if len(high_idx) < 2:
+                        L1.append(np.nan)
+                        continue
+
+                    # Find gaps (MATLAB line 413)
+                    gaps = np.where(np.diff(high_idx) > 20)[0]
+                    boundaries = np.sort(np.concatenate([
+                        [high_idx[0]],
+                        high_idx[gaps] if len(gaps) > 0 else [],
+                        high_idx[gaps + 1] if len(gaps) > 0 else [],
+                        [high_idx[-1]]
+                    ]))
+
+                    # Find boundaries around peak (MATLAB lines 414-418)
+                    before_peak = boundaries[boundaries < peak_idx]
+                    after_peak = boundaries[boundaries > peak_idx]
+
+                    if len(before_peak) > 0 and len(after_peak) > 0:
+                        idl = before_peak[-1]
+                        idp = after_peak[0]
+                        b = idp - idl
+
+                        # Convert pixel distance to meters (MATLAB line 419)
+                        L1.append(np.abs(b) * dx)
+                    else:
+                        L1.append(np.nan)
+
+                except:
+                    L1.append(np.nan)
+
+            L1 = np.array(L1)
+
+            # Photogrammetric correction (MATLAB lines 425-426)
+            cor = L1 * AngleCam / np.tan(AngleWaveFront)
+            Lf = (L1 - cor) * AngleCam
+
+            # Filter valid heights (MATLAB lines 428-430)
+            ind = np.where((Lf > 0) & (~np.isnan(Lf)))[0]
+
+            if len(ind) == 0:
+                return np.nan, np.nan
+
+            Lord = np.sort(Lf[ind])[::-1]  # Sort descending
+
+            # Remove outliers: keep middle 80% (MATLAB line 430)
+            start_idx = max(1, round(len(Lord) / 10))
+            end_idx = min(len(Lord) - 1, round(9 * len(Lord) / 10))
+            Lord = Lord[start_idx:end_idx]
+
+            if len(Lord) == 0:
+                return np.nan, np.nan
+
+            # Significant wave height: median of top third (MATLAB line 432)
+            n_third = max(1, round(len(Lord) / 3))
+            hs = np.nanmedian(Lord[:n_third])
+
+            # Mean wave height: median of all (MATLAB line 433)
+            hm = np.nanmedian(Lord)
+
+            return hs, hm
+
+        except Exception as e:
+            print(f"    BreakerHeight error: {str(e)[:100]}")
+            return np.nan, np.nan
+
+    def _compute_wave_height_photogrammetric_old(self, timestack: np.ndarray,
                                              cross_shore_positions: np.ndarray,
                                              break_idx: int) -> float:
         """
+        OLD VERSION - DEPRECATED
         Compute wave height using photogrammetric method with camera geometry.
         Matches MATLAB BreakerHeight function (lines 392-455).
 
