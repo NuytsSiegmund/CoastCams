@@ -509,9 +509,14 @@ class WaveAnalyzer:
             # Photogrammetric correction (MATLAB lines 425-426)
             # MATLAB: cor = (L1).*tan(AngleCam)/tan(AngleWaveFront);
             # MATLAB: Lf = (L1 - cor).*tan(AngleCam);
-            cor = L1 * np.tan(AngleCam) / np.tan(AngleWaveFront)
-            Lf = (L1 - cor) * np.tan(AngleCam)
+            print(f"    DEBUG: tan(AngleCam) range: {np.min(np.tan(AngleCam)):.3f} to {np.max(np.tan(AngleCam)):.3f}")
+            print(f"    DEBUG: tan(AngleWaveFront) = {np.tan(AngleWaveFront):.3f}")
 
+            cor = L1 * np.tan(AngleCam) / np.tan(AngleWaveFront)
+            print(f"    DEBUG: cor range: {np.nanmin(cor):.3f} to {np.nanmax(cor):.3f}m")
+
+            Lf = (L1 - cor) * np.tan(AngleCam)
+            print(f"    DEBUG: Lf range (all): {np.nanmin(Lf):.3f} to {np.nanmax(Lf):.3f}m")
             print(f"    DEBUG: Lf computed, valid={np.sum((Lf > 0) & (~np.isnan(Lf)))}")
             if np.sum((Lf > 0) & (~np.isnan(Lf))) > 0:
                 print(f"    DEBUG: Lf range (valid): {np.nanmin(Lf[Lf > 0]):.3f} to {np.nanmax(Lf[Lf > 0]):.3f}m")
