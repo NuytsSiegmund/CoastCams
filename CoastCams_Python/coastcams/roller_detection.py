@@ -60,8 +60,7 @@ def radon_separation(M: np.ndarray) -> np.ndarray:
     """
     Separate incident wave component using Radon transform.
 
-    Simplified version of MATLAB RadonSeparationmodif.
-    For now, just demean each spatial column.
+    Matches MATLAB RadonSeparationmodif and FiltreRadon functions.
 
     Parameters
     ----------
@@ -71,23 +70,73 @@ def radon_separation(M: np.ndarray) -> np.ndarray:
     Returns
     -------
     np.ndarray
-        Incident component
+        Incident component (filtered between angles 1-89 degrees)
     """
+    from skimage.transform import radon, iradon
+
     nt, nx = M.shape
 
     if nx > nt:
-        # If dimensions are swapped, just return as-is
+        # If dimensions are swapped, return as-is
         return M
 
-    # Demean each spatial column
+    # Pre-treatment: demean each spatial column (MATLAB line 2000)
     Sin = M.copy()
     for i in range(nx):
         Sin[:, i] = Sin[:, i] - np.nanmean(Sin[:, i])
 
-    # TODO: Implement full Radon filtering (FiltreRadon)
-    # For now, this simplified version removes the mean
+    try:
+        # Apply Radon filtering to separate incident component
+        # MATLAB: [Sin]=FiltreRadon(M(1:nt,1:nx),1,89)
 
-    return Sin
+        # Radon transform with angles 0-179 (MATLAB line 2023)
+        theta = np.arange(180)
+        R = radon(Sin, theta=theta, circle=False)
+
+        # Filter to keep only angles 1-89 (incident waves, MATLAB line 2026)
+        Lm = 1
+        Lx = 89
+        R_filtered = R[:, Lm:Lx+1]
+        theta_filtered = theta[Lm:Lx+1]
+
+        # Inverse Radon transform (MATLAB line 2026)
+        I = iradon(R_filtered, theta=theta_filtered, filter_name='hann', output_size=nt)
+
+        # Extract center region to match original size (MATLAB lines 2029-2040)
+        mx = I.shape[0]
+        mn = min(nt, nx)
+
+        if mx > mn:
+            ind_start = round(mx/2 - mn/2)
+            ind_end = ind_start + mn
+            I_cropped = I[:, ind_start:ind_end]
+        else:
+            I_cropped = I
+
+        # Handle size mismatch
+        S2 = np.full_like(Sin, np.nan)
+
+        if I_cropped.shape[1] <= nx:
+            # Center the result
+            c1, c2 = nt, nx
+            if c2 > c1:
+                start_col = (c2 - I_cropped.shape[1]) // 2
+                S2[:min(nt, I_cropped.shape[0]), start_col:start_col + I_cropped.shape[1]] = I_cropped[:min(nt, I_cropped.shape[0]), :]
+            else:
+                S2[:min(nt, I_cropped.shape[0]), :min(nx, I_cropped.shape[1])] = I_cropped[:min(nt, I_cropped.shape[0]), :min(nx, I_cropped.shape[1])]
+
+        # Multiply by 0.5 (MATLAB line 2044)
+        S2 = S2 * 0.5
+
+        # Replace NaN with original demeaned values
+        S2[np.isnan(S2)] = Sin[np.isnan(S2)]
+
+        return S2
+
+    except Exception as e:
+        # If Radon transform fails, return demeaned version
+        print(f"Warning: Radon transform failed ({str(e)}), using demeaned data")
+        return Sin
 
 
 def image_preprocessing(A: np.ndarray, dt: float) -> np.ndarray:
@@ -115,26 +164,37 @@ def image_preprocessing(A: np.ndarray, dt: float) -> np.ndarray:
 
     B = np.zeros_like(A[:, :, 0] if A.ndim == 3 else A)
 
-    # Design filters - using Butterworth for speed (FIR ord=1000 is too slow)
+    # Design FIR filters to match MATLAB exactly
+    # MATLAB: ord = 1000, fir1(ord, Val, 'low'/'high')
     fr = 1.0 / dt
-    nyq = fr / 2.0
 
-    # Low-pass filter (cutoff = 1.5s = 0.667 Hz)
+    # Low-pass filter (cutoff = 1.5s)
     Tcoupure_low = 1.5
-    cutoff_low = 1.0 / Tcoupure_low  # Hz
+    Val_low = (1.0 / Tcoupure_low) * 2 * (1.0 / fr)
+    ord = 1000
 
-    # High-pass filter (cutoff = 20s = 0.05 Hz)
-    Tcoupure_high = 20
-    cutoff_high = 1.0 / Tcoupure_high  # Hz
+    # Ensure normalized frequency is valid
+    if Val_low >= 1.0:
+        Val_low = 0.99
 
-    # Use 4th order Butterworth (much faster than FIR ord=1000)
+    # Design FIR filters matching MATLAB fir1()
     try:
-        b_low, a_low = signal.butter(4, min(cutoff_low / nyq, 0.99), btype='low')
-        b_high, a_high = signal.butter(4, min(cutoff_high / nyq, 0.99), btype='high')
+        fil_low = signal.firwin(ord + 1, Val_low, window='hamming')
     except:
-        # Fallback to simple filters
-        b_low, a_low = np.array([1.0]), np.array([1.0])
-        b_high, a_high = np.array([1.0, -1.0]), np.array([1.0])
+        # Fallback if filter design fails
+        fil_low = signal.firwin(min(ord, nt-1), Val_low, window='hamming')
+
+    # High-pass filter (cutoff = 20s)
+    Tcoupure_high = 20
+    Val_high = (1.0 / Tcoupure_high) * 2 * (1.0 / fr)
+
+    if Val_high >= 1.0:
+        Val_high = 0.99
+
+    try:
+        fil_high = signal.firwin(ord + 1, Val_high, pass_zero=False, window='hamming')
+    except:
+        fil_high = signal.firwin(min(ord, nt-1), Val_high, pass_zero=False, window='hamming')
 
     # Process every resc-th spatial column
     for ic in range(0, nc, resc):
@@ -144,19 +204,16 @@ def image_preprocessing(A: np.ndarray, dt: float) -> np.ndarray:
         else:
             ts = A[:, ic]
 
-        # Low-pass filter using filtfilt (zero-phase)
-        try:
-            kk1 = signal.filtfilt(b_low, a_low, ts)
-        except:
-            kk1 = ts
-        S = signal.detrend(kk1)
+        # Low-pass filter using convolution (matching MATLAB)
+        kk1 = np.convolve(fil_low, ts, mode='full')
+        # Trim edges like MATLAB: kk1((max(ord)/2)+1 : length(kk1)-(max(ord)/2))
+        edge_trim = ord // 2
+        S = signal.detrend(kk1[edge_trim:len(kk1)-edge_trim])
 
-        # High-pass filter using filtfilt
-        try:
-            kk2 = signal.filtfilt(b_high, a_high, S)
-        except:
-            kk2 = S
-        y = signal.detrend(kk2)
+        # High-pass filter using convolution
+        kk2 = np.convolve(fil_high, S, mode='full')
+        # Trim edges
+        y = signal.detrend(kk2[edge_trim:len(kk2)-edge_trim])
 
         B[:, ic] = y
 
@@ -173,9 +230,8 @@ def image_preprocessing(A: np.ndarray, dt: float) -> np.ndarray:
     # Replace NaN with 0
     B[np.isnan(B)] = 0
 
-    # Apply Radon separation (simplified - just demean for speed)
-    # Full Radon transform implementation would go here
-    # B = radon_separation(B)  # Disabled for speed - simple demean is sufficient
+    # Apply Radon separation to extract incident wave component (MATLAB line 202)
+    B = radon_separation(B)
 
     return B
 

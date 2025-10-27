@@ -165,9 +165,21 @@ class WaveAnalyzer:
             if len(PosX) > 0 and not np.any(np.isnan(PosX)):
                 # Compute wave height using photogrammetric method
                 print(f"  Computing photogrammetric wave height for {len(PosX)} events...")
+
+                # Create dx array (spatial resolution at each position)
+                # MATLAB: dx is a vector that can vary with position
+                # For uniform spacing: dx = constant array
+                if len(cross_shore_positions) > 1:
+                    # Compute dx from differences (MATLAB: X1 = cumsum(dx))
+                    dx_array = np.diff(cross_shore_positions)
+                    # Extend to same length by appending last value
+                    dx_array = np.append(dx_array, dx_array[-1])
+                else:
+                    dx_array = np.array([self.pixel_resolution])
+
                 hs, hm = self._breaker_height(
                     B_processed, PosT, PosX, Lw,
-                    cross_shore_positions, self.pixel_resolution
+                    cross_shore_positions, dx_array
                 )
 
                 print(f"  Photogrammetric result: hs={hs}, hm={hm}")
@@ -356,7 +368,7 @@ class WaveAnalyzer:
         return wave_heights
 
     def _breaker_height(self, B: np.ndarray, PosT: np.ndarray, PosX: np.ndarray,
-                       Lw: np.ndarray, X1: np.ndarray, dx: float) -> Tuple[float, float]:
+                       Lw: np.ndarray, X1: np.ndarray, dx: np.ndarray) -> Tuple[float, float]:
         """
         Calculate wave height at breaking point using photogrammetric method.
 
@@ -374,8 +386,8 @@ class WaveAnalyzer:
             Roller lengths array
         X1 : np.ndarray
             Cross-shore positions in meters
-        dx : float
-            Spatial resolution (m/pixel)
+        dx : np.ndarray
+            Spatial resolution array (m/pixel) - can vary with position
 
         Returns
         -------
@@ -461,7 +473,10 @@ class WaveAnalyzer:
                         b = idp - idl
 
                         # Convert pixel distance to meters (MATLAB line 419)
-                        L1.append(np.abs(b) * dx)
+                        # MATLAB: L1(i) = abs(b).*dx(PosX(i))' - access dx at breaking position
+                        pos_idx = int(PosX[i])
+                        dx_at_pos = dx[pos_idx] if pos_idx < len(dx) else dx[-1]
+                        L1.append(np.abs(b) * dx_at_pos)
                     else:
                         L1.append(np.nan)
 
@@ -496,6 +511,67 @@ class WaveAnalyzer:
 
             # Mean wave height: median of all (MATLAB line 433)
             hm = np.nanmedian(Lord)
+
+            # Alternative hm calculation (MATLAB lines 435-448)
+            # Accumulate spatial profiles across all breaking events
+            try:
+                vecm = np.zeros(350)
+                for i in range(len(PosT)):
+                    try:
+                        # Extract window for this event
+                        t_start = max(0, int(PosT[i]) - 25)
+                        t_end = min(B.shape[0], int(PosT[i]) + 25)
+                        x_start = max(0, int(PosX[i]) - 100)
+                        x_end = B.shape[1]
+
+                        window = B[t_start:t_end, x_start:x_end]
+
+                        if window.size > 0:
+                            # Compute max-min range along time for each spatial position
+                            spatial_ranges = []
+                            for x_idx in range(window.shape[1]):
+                                ts = window[:, x_idx]
+                                if np.sum(~np.isnan(ts)) > len(ts) / 2:
+                                    range_val = np.nanmax(ts) - np.nanmin(ts)
+                                    spatial_ranges.append(range_val)
+                                else:
+                                    spatial_ranges.append(np.nan)
+
+                            if len(spatial_ranges) > 0:
+                                vec = np.array(spatial_ranges)
+
+                                # Filter twice (MATLAB FilterMean with windows 20 and 5)
+                                from .roller_detection import filter_mean
+                                vec = filter_mean(filter_mean(vec, 20), 5)
+
+                                # Accumulate (limited to 350 points)
+                                n_pts = min(len(vec), 350, len(vecm))
+                                vecm[:n_pts] += vec[:n_pts]
+                    except:
+                        continue
+
+                # Find max and min of derivative
+                if np.sum(vecm != 0) > 10:
+                    diff_vecm = np.diff(vecm)
+                    gtf = np.argmax(diff_vecm)  # Position of max increase
+                    gtd = np.argmin(diff_vecm)  # Position of max decrease
+
+                    # Compute L1 from distance between these points
+                    pos_idx = int(np.nanmedian(PosX))
+                    dx_at_pos = dx[pos_idx] if pos_idx < len(dx) else dx[-1]
+                    L1_alt = dx_at_pos * abs(gtd - gtf)
+
+                    # Photogrammetric correction (same as main calculation)
+                    AngleCam_mean = np.nanmean(AngleCam)
+                    cor_alt = L1_alt * AngleCam_mean / np.tan(AngleWaveFront)
+                    hm_alt = (L1_alt - cor_alt) * AngleCam_mean
+
+                    # Use alternative if it's valid and different from primary
+                    if not np.isnan(hm_alt) and hm_alt > 0:
+                        # Average the two methods for robustness
+                        hm = (hm + hm_alt) / 2.0
+            except:
+                pass  # Keep primary hm if alternative fails
 
             return hs, hm
 
@@ -788,6 +864,200 @@ class WaveAnalyzer:
         peak_period = 1.0 / peak_freq if peak_freq > 0 else np.nan
 
         return peak_period
+
+    def linear_c(self, T: float, c: np.ndarray, precision: float = 0.01) -> np.ndarray:
+        """
+        Calculate water depth for linear waves using dispersion relation.
+
+        Matches MATLAB LinearC function (lines 135-156).
+        Iteratively solves: ω² = g*k*tanh(k*d) for depth d.
+
+        Parameters
+        ----------
+        T : float
+            Wave period (seconds)
+        c : np.ndarray
+            Phase speed / wave celerity (m/s)
+        precision : float, optional
+            Convergence precision (default: 0.01)
+
+        Returns
+        -------
+        np.ndarray
+            Water depth (meters) for each celerity value
+        """
+        df = np.zeros_like(c)
+
+        for i in range(len(c)):
+            if np.isnan(c[i]) or c[i] <= 0:
+                df[i] = np.nan
+                continue
+
+            # Initialize
+            w = 2 * np.pi / T  # Angular frequency
+            k = w / c[i]  # Wave number
+            g = self.gravity  # Gravity
+            do = 1000  # Arbitrary large value
+            d = c[i]**2 / g  # Initial guess
+
+            # Newton-Raphson iteration
+            ct = 0
+            max_iter = 100
+            while abs(do - d) > precision and ct < max_iter:
+                ct += 1
+                do = d
+                # Dispersion relation: ω² = g*k*tanh(k*d)
+                dispe = w**2 - g * k * np.tanh(k * d)
+                # Derivative for Newton-Raphson
+                fdispe = -g * (k**2) / (np.cosh(k * d)**2)
+                # Update depth
+                d = d - dispe / fdispe
+
+            df[i] = d
+
+        return df
+
+    def radon_c_indiv(self, dt: float, dx: np.ndarray, In: np.ndarray, Tm: float) -> np.ndarray:
+        """
+        Compute wave celerity using Radon transform on windowed segments.
+
+        Matches MATLAB RadonCIndiv_20140903 function (lines 457-540).
+
+        Parameters
+        ----------
+        dt : float
+            Temporal resolution (seconds)
+        dx : np.ndarray
+            Spatial resolution array (m/pixel)
+        In : np.ndarray
+            Input timestack (time × space)
+        Tm : float
+            Wave period (seconds)
+
+        Returns
+        -------
+        np.ndarray
+            Wave celerity for each spatial position (m/s)
+        """
+        from skimage.transform import radon
+        from scipy.ndimage import uniform_filter1d
+
+        # Spatial and temporal resolution degradation
+        pdx = 2  # Spatial decimation factor
+        pdt = 1  # Temporal decimation factor
+
+        # Temporal and spatial frequency
+        freq_t = 1.0 / dt
+        if isinstance(dx, np.ndarray):
+            freq_x = 1.0 / (dx * pdx)
+        else:
+            freq_x = 1.0 / (dx * pdx)
+
+        # Degrade resolution and compute difference
+        # MATLAB: M=detrend(abs(diff(In(1:pdt:length(In(:,1)),1:pdx:length(In(1,:))),1))')';
+        In_decimated = In[::pdt, ::pdx]
+        M = np.abs(np.diff(In_decimated, axis=0))
+        M = signal.detrend(M, axis=0)
+
+        # Window size in space
+        Wx = max(10, round(M.shape[1] / 10))
+
+        # Initialize output
+        CRadmoyt = np.full(M.shape[1], np.nan)
+
+        # Loop over spatial positions
+        for ix in range(Wx + 1, M.shape[1] - Wx, Wx - 1):
+            try:
+                # Extract window
+                MR = signal.detrend(M[:, ix - Wx:ix + Wx + 1], axis=0)
+
+                nt = MR.shape[0]
+                if nt < 10:
+                    continue
+
+                # Radon transform
+                iang = np.arange(1, 181)
+                R = radon(MR, theta=iang, circle=False)
+
+                nr = R.shape[0]
+                amp = nr / nt
+
+                # Compute resolution for each angle
+                k = nt
+                trk = np.floor(MR.shape[0] / 2) - np.floor(0 * np.cos(np.deg2rad(iang)) +
+                                                            (MR.shape[0] / 2 - k * amp) * np.sin(np.deg2rad(iang)))
+                trk = trk - np.min(trk)
+                trk[trk == 0] = 1  # Avoid division by zero
+                res = (nt * dt) / (trk * 2)
+
+                # Filter R2 based on wave period
+                R2 = np.zeros_like(R)
+                for i, angle in enumerate(iang):
+                    if res[i] > 0:
+                        # Smooth with period-dependent windows
+                        win1 = max(1, round((Tm + 2) / res[i]))
+                        win2 = max(1, round((Tm - 2) / res[i]))
+
+                        # Apply smoothing
+                        R_smooth1 = uniform_filter1d(R[:, i], size=int(win1), mode='nearest')
+                        R_detrend = R[:, i] - R_smooth1
+                        R2[:, i] = uniform_filter1d(R_detrend, size=int(win2), mode='nearest')
+                    else:
+                        R2[:, i] = R[:, i]
+
+                # Find peak angle in first 90 degrees (incident waves)
+                vec = np.nanstd(R2[round(R2.shape[0] / 4):round(3 * R2.shape[0] / 4), :90], axis=0)
+                vec = uniform_filter1d(vec, size=10, mode='nearest')
+                a2 = np.argmax(vec)
+                frd = vec[a2]
+
+                # Check if peak is significant
+                if vec[a2] > 1.15 * vec[89]:
+                    # Compute celerity from angle
+                    # MATLAB: C2=(1/mean(freq_x))/(tand(90-a2)*(1/mean(freq_t)))
+                    angle_deg = iang[a2]
+                    if isinstance(freq_x, np.ndarray):
+                        freq_x_local = np.nanmedian(freq_x[pdx * (ix - Wx):pdx * (ix + Wx + 1)])
+                    else:
+                        freq_x_local = freq_x
+
+                    tan_angle = np.tan(np.deg2rad(90 - angle_deg))
+                    if tan_angle != 0:
+                        C2 = (1.0 / freq_x_local) / (tan_angle * (1.0 / freq_t))
+                    else:
+                        C2 = np.nan
+                else:
+                    C2 = np.nan
+
+                # Assign to output range
+                CRadmoyt[ix - Wx:ix + Wx + 1] = C2
+
+            except Exception as e:
+                continue
+
+        # Interpolate to fill gaps
+        notnan = np.where((~np.isnan(CRadmoyt)) & (CRadmoyt > 0))[0]
+
+        if isinstance(dx, np.ndarray):
+            CRadmoy = np.full_like(dx, np.nan, dtype=float)
+        else:
+            CRadmoy = np.full(In.shape[1], np.nan, dtype=float)
+
+        if len(notnan) > 1:
+            try:
+                min_idx = np.min(notnan * pdx)
+                max_idx = np.max(notnan * pdx)
+                if max_idx < len(CRadmoy):
+                    x_interp = np.arange(min_idx, max_idx + 1)
+                    CRadmoy[min_idx:max_idx + 1] = np.interp(
+                        x_interp,
+                        pdx * notnan,
+                        CRadmoyt[notnan]
+                    )
+            except:
+                pass
+
+        return CRadmoy
 
     def compute_wave_celerity(self, timestack: np.ndarray,
                              dx: float) -> np.ndarray:
