@@ -155,8 +155,8 @@ class CoastCamsWorkflow:
                 'wave_celerity': correlation_results.get('mean_celerity', np.nan),
                 'water_depth': bathymetry_results.get('mean_depth', np.nan),
                 'sla': sla,
-                # Store full bathymetry profile for averaging
-                'depth_profile': bathymetry_results.get('depths_smoothed', None),
+                # Store filtered (not yet smoothed) depth profile for MATLAB-style smoothing
+                'depth_profile': bathymetry_results.get('depths_filtered', None),
                 'cross_shore_positions': bathymetry_results.get('cross_shore_positions', None),
             }
             all_results.append(result)
@@ -281,61 +281,101 @@ class CoastCamsWorkflow:
         all_results : list
             List of result dictionaries, one per timestack image
         """
+        from scipy.ndimage import uniform_filter1d
+
         # Extract arrays for each parameter
         timestamps = [r['timestamp'] for r in all_results]
         shorelines = [r['shoreline_mean'] for r in all_results]
         wave_heights = [r['wave_height'] for r in all_results]
         wave_periods = [r['wave_period'] for r in all_results]
         wave_celerities = [r['wave_celerity'] for r in all_results]
-        water_depths = [r['water_depth'] for r in all_results]
 
-        # Convert to arrays
-        water_depths_array = np.array(water_depths)
+        # ===== MATLAB Depth Smoothing Approach =====
+        # In MATLAB (S01_AnalysisTimestackImages.m, lines 252-264):
+        # 1. WaterDepth_L = [WaterDepth_L; movmean(df(:,1:numel(sLimit)), 10)];
+        # 2. Csmooth_L = smooth2(WaterDepth_L, Nr=1, Nc=30);
+        # 3. SLA_S = Csmooth_L - nanmean(Csmooth_L);
 
-        # Compute averaged bathymetry profile across all timestacks
-        depth_profiles = [r['depth_profile'] for r in all_results if r['depth_profile'] is not None]
-        cross_shore_pos = [r['cross_shore_positions'] for r in all_results if r['cross_shore_positions'] is not None]
+        # Extract raw depth profiles (not pre-smoothed)
+        depth_profiles_list = []
+        cross_shore_pos_list = []
 
-        if len(depth_profiles) > 0:
-            # Find common cross-shore positions (use first non-None as reference)
-            reference_positions = cross_shore_pos[0]
+        for r in all_results:
+            if r.get('depth_profile') is not None:
+                # Get the filtered depths (not yet smoothed across timestacks)
+                depth_profiles_list.append(r['depth_profile'])
+                cross_shore_pos_list.append(r.get('cross_shore_positions'))
 
-            # Stack all depth profiles and average
-            min_length = min(len(profile) for profile in depth_profiles)
-            depth_profiles_trimmed = [profile[:min_length] for profile in depth_profiles]
+        if len(depth_profiles_list) > 0:
+            # Stack into 2D matrix: (num_timestacks × num_spatial_positions)
+            min_length = min(len(profile) for profile in depth_profiles_list)
+            depth_profiles_trimmed = [profile[:min_length] for profile in depth_profiles_list]
+            depth_matrix = np.array(depth_profiles_trimmed)  # Shape: (timestacks, space)
 
-            averaged_depth_profile = np.nanmean(depth_profiles_trimmed, axis=0)
-            bathymetry_positions = reference_positions[:min_length]
+            reference_positions = cross_shore_pos_list[0][:min_length]
+
+            print(f"Depth matrix shape: {depth_matrix.shape} (timestacks × spatial points)")
+
+            # Step 1: Apply 10-point moving average to each row (each timestack)
+            # This matches MATLAB's movmean(df, 10)
+            depth_matrix_ma = np.zeros_like(depth_matrix)
+            for i in range(depth_matrix.shape[0]):
+                # Use uniform_filter1d for moving average (size=10)
+                depth_matrix_ma[i, :] = uniform_filter1d(
+                    depth_matrix[i, :], size=10, mode='nearest'
+                )
+
+            # Step 2: Apply 2D smoothing (smooth2 with Nr=1, Nc=30)
+            # Nr=1 means minimal smoothing across timestacks
+            # Nc=30 means 30-point smoothing spatially
+            from scipy.ndimage import uniform_filter
+
+            # smooth2 with (Nr=1, Nc=30) means window (2*1+1, 2*30+1) = (3, 61)
+            # But MATLAB's smooth2 is more like (1, 30) based on the parameters
+            # Let's apply spatial smoothing with window size 30
+            depth_matrix_smooth = np.zeros_like(depth_matrix_ma)
+            for i in range(depth_matrix_ma.shape[0]):
+                depth_matrix_smooth[i, :] = uniform_filter1d(
+                    depth_matrix_ma[i, :], size=30, mode='nearest'
+                )
+
+            print(f"Applied MATLAB smoothing: movmean(10) + smooth2(Nr=1, Nc=30)")
+
+            # Compute mean depth for each timestack from smoothed profiles
+            water_depths_array = np.nanmean(depth_matrix_smooth, axis=1)
+
+            # Compute averaged bathymetry profile across all timestacks
+            averaged_depth_profile = np.nanmean(depth_matrix_smooth, axis=0)
+            bathymetry_positions = reference_positions
 
             # Calculate beach slope from bathymetry gradient
-            # Fit linear regression to nearshore portion (first 20% of profile)
             nearshore_length = max(10, min_length // 5)
             x_nearshore = bathymetry_positions[:nearshore_length]
             y_nearshore = averaged_depth_profile[:nearshore_length]
 
-            # Remove NaN values
             valid_mask = ~np.isnan(y_nearshore)
             if np.sum(valid_mask) >= 2:
                 slope_fit = np.polyfit(x_nearshore[valid_mask], y_nearshore[valid_mask], 1)
-                beach_slope = abs(slope_fit[0])  # depth/distance
+                beach_slope = abs(slope_fit[0])
             else:
-                beach_slope = 0.02  # Default fallback
+                beach_slope = 0.02
 
             print(f"Averaged bathymetry profile: {len(averaged_depth_profile)} points")
             print(f"  Depth range: {np.nanmin(averaged_depth_profile):.2f} to {np.nanmax(averaged_depth_profile):.2f} m")
             print(f"  Beach slope from bathymetry: {beach_slope:.4f} ({beach_slope*100:.2f}%)")
         else:
+            water_depths_array = np.array([r['water_depth'] for r in all_results])
             averaged_depth_profile = np.array([])
             bathymetry_positions = np.array([])
             beach_slope = 0.02
 
         # Calculate SLA using MATLAB approach: SLA = WaterDepth - mean(WaterDepth)
-        # This removes tidal signal from water depth measurements
         mean_water_depth = np.nanmean(water_depths_array)
         slas = water_depths_array - mean_water_depth
 
-        print(f"Mean water depth: {mean_water_depth:.2f} m")
-        print(f"SLA range (from depth): {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
+        print(f"Water depths: {water_depths_array}")
+        print(f"Mean water depth: {mean_water_depth:.3f} m")
+        print(f"SLA range: {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
 
         # Store in results dictionary
         self.results = {
@@ -344,8 +384,8 @@ class CoastCamsWorkflow:
             'wave_heights_timeseries': np.array(wave_heights),
             'wave_periods_timeseries': np.array(wave_periods),
             'celerities': np.array(wave_celerities),
-            'depths': water_depths_array,  # Varying water depth per timestack
-            'sla_values': slas,  # SLA from depth deviation
+            'depths': water_depths_array,
+            'sla_values': slas,
             'beach_slope': beach_slope,
             # Averaged bathymetry profile
             'depths_smoothed': averaged_depth_profile,
