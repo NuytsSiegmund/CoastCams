@@ -404,10 +404,17 @@ class WaveAnalyzer:
             # AngleCam = abs(z0./X1(PosX))
             AngleCam = np.abs(self.camera_height / X1[PosX.astype(int)])
 
+            print(f"    DEBUG _breaker_height: B.shape={B.shape}, len(PosT)={len(PosT)}, len(PosX)={len(PosX)}")
+            print(f"    DEBUG: camera_height={self.camera_height:.2f}m")
+            print(f"    DEBUG: X1 range: {np.min(X1):.2f} to {np.max(X1):.2f}m")
+            print(f"    DEBUG: PosX range: {np.min(PosX):.0f} to {np.max(PosX):.0f}")
+
             # Initialize wave height array
             L1 = []
 
             # Process each breaking event (MATLAB lines 408-423)
+            nan_count = 0
+            valid_count = 0
             for i in range(len(PosT)):
                 try:
                     # Extract window around this breaking event (±25 frames, offshore from break point)
@@ -420,6 +427,7 @@ class WaveAnalyzer:
 
                     if window.size == 0:
                         L1.append(np.nan)
+                        nan_count += 1
                         continue
 
                     # Compute max-min range along time for each spatial position
@@ -477,22 +485,36 @@ class WaveAnalyzer:
                         pos_idx = int(PosX[i])
                         dx_at_pos = dx[pos_idx] if pos_idx < len(dx) else dx[-1]
                         L1.append(np.abs(b) * dx_at_pos)
+                        valid_count += 1
                     else:
                         L1.append(np.nan)
+                        nan_count += 1
 
                 except:
                     L1.append(np.nan)
+                    nan_count += 1
+
+            print(f"    DEBUG: Processed {len(PosT)} events: valid={valid_count}, nan={nan_count}")
 
             L1 = np.array(L1)
+
+            print(f"    DEBUG: L1 computed, len={len(L1)}, valid={np.sum(~np.isnan(L1))}")
+            if len(L1) > 0:
+                print(f"    DEBUG: L1 range: {np.nanmin(L1):.3f} to {np.nanmax(L1):.3f}m")
 
             # Photogrammetric correction (MATLAB lines 425-426)
             cor = L1 * AngleCam / np.tan(AngleWaveFront)
             Lf = (L1 - cor) * AngleCam
 
+            print(f"    DEBUG: Lf computed, valid={np.sum((Lf > 0) & (~np.isnan(Lf)))}")
+            if np.sum((Lf > 0) & (~np.isnan(Lf))) > 0:
+                print(f"    DEBUG: Lf range (valid): {np.nanmin(Lf[Lf > 0]):.3f} to {np.nanmax(Lf[Lf > 0]):.3f}m")
+
             # Filter valid heights (MATLAB lines 428-430)
             ind = np.where((Lf > 0) & (~np.isnan(Lf)))[0]
 
             if len(ind) == 0:
+                print(f"    DEBUG: No valid Lf values! Returning NaN")
                 return np.nan, np.nan
 
             Lord = np.sort(Lf[ind])[::-1]  # Sort descending
