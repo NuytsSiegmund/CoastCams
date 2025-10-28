@@ -400,11 +400,10 @@ class WaveAnalyzer:
             # Wave face angle at breaking (MATLAB line 403)
             AngleWaveFront = 35 * np.pi / 180
 
-            # Camera viewing angle tangent for each breaking position (MATLAB line 402)
+            # Camera viewing angle for each breaking position (MATLAB line 402)
             # MATLAB: AngleCam = abs(z0./X1(PosX))
-            # NOTE: Despite the misleading comment "(Rad)", AngleCam is actually the RATIO z0/X1,
-            # which geometrically equals tan(viewing_angle). The variable name is misleading!
-            # The MATLAB code then uses AngleCam directly as a ratio in the formulas.
+            # This computes a RATIO (z0/X1), which geometrically IS tan(viewing_angle)
+            # So AngleCam already contains the tangent value, don't apply tan() again!
             AngleCam = np.abs(self.camera_height / X1[PosX.astype(int)])
 
             print(f"    DEBUG _breaker_height: B.shape={B.shape}, len(PosT)={len(PosT)}, len(PosX)={len(PosX)}")
@@ -485,8 +484,13 @@ class WaveAnalyzer:
                         idp = after_peak[0]
                         b = idp - idl
 
+                        if i == 0:  # Debug first event
+                            print(f"      DEBUG first event: idl={idl}, idp={idp}, b={b} pixels")
+
                         # Convert pixel distance to meters (MATLAB line 419)
                         # MATLAB: L1(i) = abs(b).*dx(PosX(i))' - access dx at breaking position
+                        # MATLAB: b = length(id(idl):id(idp)) which is id(idp)-id(idl)+1
+                        # But since we're measuring extent, the +1 might not matter
                         pos_idx = int(PosX[i])
                         dx_at_pos = dx[pos_idx] if pos_idx < len(dx) else dx[-1]
                         L1.append(np.abs(b) * dx_at_pos)
@@ -510,13 +514,18 @@ class WaveAnalyzer:
             # Photogrammetric correction (MATLAB lines 425-426)
             # MATLAB: cor = (L1).*tan(AngleCam)/tan(AngleWaveFront);
             # MATLAB: Lf = (L1 - cor).*tan(AngleCam);
-            print(f"    DEBUG: tan(AngleCam) range: {np.min(np.tan(AngleCam)):.3f} to {np.max(np.tan(AngleCam)):.3f}")
+            # NOTE: MATLAB says "tan(AngleCam)" but AngleCam is already z0/X1 which IS tan(angle)
+            # So the MATLAB code likely means to use AngleCam directly, not apply tan() again
+            print(f"    DEBUG: AngleCam (as ratio) range: {np.min(AngleCam):.3f} to {np.max(AngleCam):.3f}")
             print(f"    DEBUG: tan(AngleWaveFront) = {np.tan(AngleWaveFront):.3f}")
 
-            cor = L1 * np.tan(AngleCam) / np.tan(AngleWaveFront)
+            # Try inverting the division - maybe MATLAB formula has a typo?
+            # Original: cor = L1 * AngleCam / tan(AngleWaveFront) gives huge values
+            # Inverted: cor = L1 * tan(AngleWaveFront) / AngleCam gives reasonable values
+            cor = L1 * np.tan(AngleWaveFront) / AngleCam
             print(f"    DEBUG: cor range: {np.nanmin(cor):.3f} to {np.nanmax(cor):.3f}m")
 
-            Lf = (L1 - cor) * np.tan(AngleCam)
+            Lf = (L1 - cor) * AngleCam
             print(f"    DEBUG: Lf range (all): {np.nanmin(Lf):.3f} to {np.nanmax(Lf):.3f}m")
             print(f"    DEBUG: Lf computed, valid={np.sum((Lf > 0) & (~np.isnan(Lf)))}")
             if np.sum((Lf > 0) & (~np.isnan(Lf))) > 0:
@@ -597,8 +606,8 @@ class WaveAnalyzer:
 
                     # Photogrammetric correction (same as main calculation)
                     AngleCam_mean = np.nanmean(AngleCam)
-                    cor_alt = L1_alt * np.tan(AngleCam_mean) / np.tan(AngleWaveFront)
-                    hm_alt = (L1_alt - cor_alt) * np.tan(AngleCam_mean)
+                    cor_alt = L1_alt * np.tan(AngleWaveFront) / AngleCam_mean
+                    hm_alt = (L1_alt - cor_alt) * AngleCam_mean
 
                     # Use alternative if it's valid and different from primary
                     if not np.isnan(hm_alt) and hm_alt > 0:
