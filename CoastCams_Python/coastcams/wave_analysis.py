@@ -400,18 +400,19 @@ class WaveAnalyzer:
             # Wave face angle at breaking (MATLAB line 403)
             AngleWaveFront = 35 * np.pi / 180
 
-            # Camera viewing angle for each breaking position (MATLAB line 402)
+            # Camera viewing angle tangent for each breaking position (MATLAB line 402)
             # MATLAB: AngleCam = abs(z0./X1(PosX))
-            # NOTE: Despite the ratio formula, MATLAB then uses tan(AngleCam) in lines 425-426
-            # This suggests AngleCam should be treated as an angle in radians
-            # For small angles: atan(z0/X1) ≈ z0/X1, but let's use atan for accuracy
-            AngleCam = np.arctan(np.abs(self.camera_height / X1[PosX.astype(int)]))
+            # NOTE: Despite the misleading comment "(Rad)", AngleCam is actually the RATIO z0/X1,
+            # which geometrically equals tan(viewing_angle). The variable name is misleading!
+            # The MATLAB code then uses AngleCam directly as a ratio in the formulas.
+            AngleCam = np.abs(self.camera_height / X1[PosX.astype(int)])
 
             print(f"    DEBUG _breaker_height: B.shape={B.shape}, len(PosT)={len(PosT)}, len(PosX)={len(PosX)}")
             print(f"    DEBUG: camera_height={self.camera_height:.2f}m")
             print(f"    DEBUG: X1 range: {np.min(X1):.2f} to {np.max(X1):.2f}m")
+            print(f"    DEBUG: X1[PosX] range: {np.min(X1[PosX.astype(int)]):.2f} to {np.max(X1[PosX.astype(int)]):.2f}m")
             print(f"    DEBUG: PosX range: {np.min(PosX):.0f} to {np.max(PosX):.0f}")
-            print(f"    DEBUG: AngleCam range: {np.min(AngleCam):.3f} to {np.max(AngleCam):.3f} rad ({np.rad2deg(np.min(AngleCam)):.1f}° to {np.rad2deg(np.max(AngleCam)):.1f}°)")
+            print(f"    DEBUG: AngleCam (ratio z0/X1) range: {np.min(AngleCam):.3f} to {np.max(AngleCam):.3f}")
 
             # Initialize wave height array
             L1 = []
