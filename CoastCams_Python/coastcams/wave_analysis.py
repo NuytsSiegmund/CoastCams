@@ -482,15 +482,14 @@ class WaveAnalyzer:
                     if len(before_peak) > 0 and len(after_peak) > 0:
                         idl = before_peak[-1]
                         idp = after_peak[0]
-                        b = idp - idl
+                        # MATLAB: b = length(id(idl):id(idp)) which is id(idp) - id(idl) + 1
+                        b = idp - idl + 1
 
                         if i == 0:  # Debug first event
                             print(f"      DEBUG first event: idl={idl}, idp={idp}, b={b} pixels")
 
                         # Convert pixel distance to meters (MATLAB line 419)
                         # MATLAB: L1(i) = abs(b).*dx(PosX(i))' - access dx at breaking position
-                        # MATLAB: b = length(id(idl):id(idp)) which is id(idp)-id(idl)+1
-                        # But since we're measuring extent, the +1 might not matter
                         pos_idx = int(PosX[i])
                         dx_at_pos = dx[pos_idx] if pos_idx < len(dx) else dx[-1]
                         L1.append(np.abs(b) * dx_at_pos)
