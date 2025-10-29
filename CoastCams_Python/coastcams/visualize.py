@@ -45,6 +45,120 @@ class CoastCamsVisualizer:
         # Set default style
         plt.style.use('seaborn-v0_8-darkgrid' if 'seaborn-v0_8-darkgrid' in plt.style.available else 'default')
 
+    def plot_matlab_style_summary(self, timestamps: List[datetime],
+                                 average_timestack: np.ndarray,
+                                 sla_matrix: Optional[np.ndarray],
+                                 wave_heights: np.ndarray,
+                                 wave_periods: np.ndarray,
+                                 rotation: int = 270,
+                                 filename: str = 'coastcams_matlab_summary.png'):
+        """
+        Create MATLAB-style comprehensive summary plot.
+
+        Matches plot_coastcams_main.m with 4 subplots:
+        1. Average Timestack (grayscale image)
+        2. Sea Level Anomaly (SLA) as 2D colormap
+        3. Significant Wave Height time series
+        4. Peak Wave Period time series
+
+        Parameters
+        ----------
+        timestamps : List[datetime]
+            Timestamps for each image
+        average_timestack : np.ndarray
+            Average intensity profile for each timestack (num_images × spatial_pixels)
+        sla_matrix : np.ndarray, optional
+            SLA matrix (num_images × spatial_pixels)
+        wave_heights : np.ndarray
+            Significant wave heights for each timestamp
+        wave_periods : np.ndarray
+            Peak wave periods for each timestamp
+        rotation : int
+            Rotation angle (default: 270)
+        filename : str
+            Output filename
+        """
+        print(f"\nCreating MATLAB-style summary plot...")
+
+        # Create figure
+        fig = plt.figure(figsize=(12, 10))
+        fig.suptitle('CoastCams Analysis Summary', fontsize=16, fontweight='bold')
+
+        # Create 4 subplots
+        ax1 = plt.subplot(4, 1, 1)
+        ax2 = plt.subplot(4, 1, 2)
+        ax3 = plt.subplot(4, 1, 3)
+        ax4 = plt.subplot(4, 1, 4)
+
+        # Convert timestamps to matplotlib dates
+        time_nums = mdates.date2num(timestamps)
+
+        # Subplot 1: Average Timestack
+        # Rotate the average timestack
+        from scipy.ndimage import rotate
+        rotated_stack = rotate(average_timestack, rotation, reshape=True, order=1)
+
+        im1 = ax1.imshow(rotated_stack.T, aspect='auto', cmap='gray',
+                        extent=[time_nums[0], time_nums[-1], 0, rotated_stack.shape[1]],
+                        origin='lower')
+        ax1.set_title('Average Timestack', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Cross-shore distance [pixels]', fontsize=12)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
+        # Subplot 2: Sea Level Anomaly
+        if sla_matrix is not None and not np.all(np.isnan(sla_matrix)):
+            # Create time vector for SLA (linearly spaced)
+            time_sla = np.linspace(time_nums[0], time_nums[-1], sla_matrix.shape[0])
+
+            im2 = ax2.imshow(sla_matrix.T, aspect='auto', cmap='jet',
+                           extent=[time_sla[0], time_sla[-1], 0, sla_matrix.shape[1]],
+                           origin='lower')
+            ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('Cross-shore position [pixels]', fontsize=12)
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
+            # Add colorbar
+            cbar = plt.colorbar(im2, ax=ax2, orientation='vertical', pad=0.02)
+            cbar.set_label('SLA [m]', fontsize=10)
+        else:
+            ax2.text(0.5, 0.5, 'SLA data not available',
+                    transform=ax2.transAxes, ha='center', va='center',
+                    fontsize=12, color='red')
+            ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('Cross-shore position [pixels]', fontsize=12)
+
+        # Subplot 3: Significant Wave Height
+        ax3.plot(timestamps, wave_heights, 'r.-', linewidth=1.5, markersize=6)
+        ax3.set_title('Significant Wave Height', fontsize=14, fontweight='bold')
+        ax3.set_ylabel('$H_s$ [m]', fontsize=12)
+        ax3.grid(True, alpha=0.3)
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
+        # Subplot 4: Peak Wave Period
+        ax4.plot(timestamps, wave_periods, 'b.-', linewidth=1.5, markersize=6)
+        ax4.set_title('Peak Wave Period', fontsize=14, fontweight='bold')
+        ax4.set_ylabel('$T_p$ [s]', fontsize=12)
+        ax4.set_xlabel('Time', fontsize=12)
+        ax4.grid(True, alpha=0.3)
+        ax4.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
+        # Synchronize x-axes
+        for ax in [ax1, ax2, ax3, ax4]:
+            ax.set_xlim(time_nums[0], time_nums[-1])
+
+        # Adjust layout
+        plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+        # Save figure
+        if self.save_plots:
+            output_path = os.path.join(self.output_dir, filename)
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            print(f"  Saved: {output_path}")
+
+        plt.show()
+
+        return fig
+
     def plot_timestack(self, timestack: np.ndarray,
                       timestamps: Optional[List[datetime]] = None,
                       cross_shore_positions: Optional[np.ndarray] = None,

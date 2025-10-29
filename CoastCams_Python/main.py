@@ -130,6 +130,10 @@ class CoastCamsWorkflow:
             timestack = self._preprocess_single_timestack(img)
             print(f"  Preprocessed timestack shape: {timestack.shape}")
 
+            # Compute average timestack (MATLAB line 281: mean(Timestack_rot, 1, 'omitnan'))
+            # timestack shape is (time, space), so mean along axis=0 (time) gives spatial profile
+            avg_timestack_profile = np.nanmean(timestack, axis=0)  # Shape: (space,)
+
             # Step 4: Analyze wave parameters
             print("[4/7] Analyzing wave parameters...")
             wave_results = self._analyze_single_timestack(timestack, shoreline)
@@ -141,6 +145,14 @@ class CoastCamsWorkflow:
             # Step 6: Estimate bathymetry
             print("[6/7] Estimating bathymetry...")
             bathymetry_results = self._estimate_bathymetry(wave_results, correlation_results)
+
+            # Debug NaN values
+            mean_depth = bathymetry_results.get('mean_depth', np.nan)
+            if np.isnan(mean_depth):
+                print(f"  ⚠️  WARNING: mean_depth is NaN!")
+                print(f"      - Celerities available: {len(correlation_results.get('celerities', []))} values")
+                print(f"      - Mean celerity: {correlation_results.get('mean_celerity', np.nan):.3f}")
+                print(f"      - Mean wave period: {wave_results.get('mean_Tm', np.nan):.2f} s")
 
             # Step 7: Compute sea level anomaly
             print("[7/7] Computing sea level anomaly...")
@@ -158,6 +170,8 @@ class CoastCamsWorkflow:
                 # Store filtered (not yet smoothed) depth profile for MATLAB-style smoothing
                 'depth_profile': bathymetry_results.get('depths_filtered', None),
                 'cross_shore_positions': bathymetry_results.get('cross_shore_positions', None),
+                # Store average timestack profile for visualization
+                'avg_timestack_profile': avg_timestack_profile,
             }
             all_results.append(result)
 
@@ -377,6 +391,30 @@ class CoastCamsWorkflow:
         print(f"Mean water depth: {mean_water_depth:.3f} m")
         print(f"SLA range: {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
 
+        # Build average timestack matrix (MATLAB line 281: Stack_av)
+        # Extract average timestack profiles from all results
+        avg_timestack_profiles = []
+        for r in all_results:
+            if 'avg_timestack_profile' in r:
+                avg_timestack_profiles.append(r['avg_timestack_profile'])
+
+        if len(avg_timestack_profiles) > 0:
+            # Stack into 2D matrix: (num_timestacks × spatial_pixels)
+            min_length = min(len(profile) for profile in avg_timestack_profiles)
+            avg_timestack_trimmed = [profile[:min_length] for profile in avg_timestack_profiles]
+            average_timestack = np.array(avg_timestack_trimmed)  # Shape: (timestacks, space)
+            print(f"Average timestack matrix shape: {average_timestack.shape}")
+        else:
+            average_timestack = None
+            print("Warning: No average timestack profiles available")
+
+        # Build SLA matrix if depth_matrix_smooth is available
+        if len(depth_profiles_list) > 0:
+            sla_matrix = depth_matrix_smooth - np.nanmean(depth_matrix_smooth)  # (timestacks, space)
+            print(f"SLA matrix shape: {sla_matrix.shape}")
+        else:
+            sla_matrix = None
+
         # Store in results dictionary
         self.results = {
             'timestamps': timestamps,
@@ -395,6 +433,9 @@ class CoastCamsWorkflow:
             'mean_Tm': np.nanmean(wave_periods),
             'mean_celerity': np.nanmean(wave_celerities),
             'mean_depth': mean_water_depth,
+            # For MATLAB-style visualization
+            'average_timestack': average_timestack,
+            'sla_matrix': sla_matrix,
         }
 
     def _detect_shorelines(self):
@@ -599,6 +640,20 @@ class CoastCamsWorkflow:
         print("\n=== Creating Visualizations ===")
         timestamps = self.results.get('timestamps', [])
         print(f"Number of timestamps: {len(timestamps)}")
+
+        # Plot MATLAB-style summary (new!)
+        if ('average_timestack' in self.results and
+            'wave_heights_timeseries' in self.results and
+            len(timestamps) > 0):
+            print("Plotting MATLAB-style summary...")
+            self.visualizer.plot_matlab_style_summary(
+                timestamps=timestamps,
+                average_timestack=self.results['average_timestack'],
+                sla_matrix=self.results.get('sla_matrix', None),
+                wave_heights=self.results['wave_heights_timeseries'],
+                wave_periods=self.results['wave_periods_timeseries'],
+                rotation=self.config.rotation_angle
+            )
 
         # Plot timestack
         if 'timestack' in self.results:
