@@ -158,25 +158,62 @@ class CoastCamsWorkflow:
             print("[7/7] Computing sea level anomaly...")
             sla = self._compute_sla_single(shoreline, bathymetry_results)
 
+            # Calculate additional parameters to match MATLAB
+            Hs = wave_results.get('mean_Hs', np.nan)
+            Tp = wave_results.get('mean_Tp', wave_results.get('mean_Tm', np.nan))  # Peak period (fallback to mean)
+            Tm = wave_results.get('mean_Tm', np.nan)
+            celerity = correlation_results.get('mean_celerity', np.nan)
+            water_depth = bathymetry_results.get('mean_depth', np.nan)
+
+            # Calculate wavelength: L = C * T
+            wavelength = celerity * Tm if not np.isnan(celerity) and not np.isnan(Tm) else np.nan
+
+            # Calculate wave energy: E = (1/16) * ρ * g * Hs^2 (simplified to Hs^2/2 for consistency)
+            wave_energy = (Hs ** 2) / 2.0 if not np.isnan(Hs) else np.nan
+
+            # Calculate shallow water depth: depth_s = C^2 / g
+            depth_shallow = (celerity ** 2) / 9.81 if not np.isnan(celerity) else np.nan
+
+            # Extract roller/breaking parameters from wave analysis
+            roller_length = wave_results.get('roller_length', np.nan)
+            breakpoint_location = wave_results.get('break_location', np.nan)
+            breakpoint_depth = wave_results.get('break_depth', np.nan)
+
+            # Calculate RTR (Relative Tidal Range) - matching MATLAB lines 274-278
+            # RTR = Hs / (water_level - min_water_level), but avoid dividing by small numbers
+            # MATLAB uses: nRTR_thresh = Level_TS - min(Level_TS); threshold at 0.2
+            water_level = celerity  # Water level proxy (from MATLAB: Level_TS = nanmean(WaveCelerity, 2))
+
             # Store results for this image
             result = {
                 'timestamp': self.image_loader.timestamps[img_idx],
                 'shoreline_mean': np.nanmean(shoreline) if shoreline is not None else np.nan,
-                'wave_height': wave_results.get('mean_Hs', np.nan),
-                'wave_period': wave_results.get('mean_Tm', np.nan),
-                'wave_celerity': correlation_results.get('mean_celerity', np.nan),
-                'water_depth': bathymetry_results.get('mean_depth', np.nan),
+                'wave_height': Hs,
+                'wave_period_mean': Tm,
+                'wave_period_peak': Tp,
+                'wave_celerity': celerity,
+                'wavelength': wavelength,
+                'wave_energy': wave_energy,
+                'water_depth': water_depth,
+                'depth_shallow': depth_shallow,
+                'roller_length': roller_length,
+                'breakpoint_location': breakpoint_location,
+                'breakpoint_depth': breakpoint_depth,
                 'sla': sla,
+                'rtr': np.nan,  # Will calculate after all timestacks processed
                 # Store filtered (not yet smoothed) depth profile for MATLAB-style smoothing
                 'depth_profile': bathymetry_results.get('depths_filtered', None),
                 'cross_shore_positions': bathymetry_results.get('cross_shore_positions', None),
                 # Store average timestack profile for visualization
                 'avg_timestack_profile': avg_timestack_profile,
+                # Store full celerity array for SLA calculation
+                'celerity_array': correlation_results.get('celerities', None),
             }
             all_results.append(result)
 
             print(f"  → Wave Height: {result['wave_height']:.3f} m" if not np.isnan(result['wave_height']) else "  → Wave Height: N/A")
-            print(f"  → Wave Period: {result['wave_period']:.2f} s" if not np.isnan(result['wave_period']) else "  → Wave Period: N/A")
+            print(f"  → Wave Period (Tm): {result['wave_period_mean']:.2f} s" if not np.isnan(result['wave_period_mean']) else "  → Wave Period: N/A")
+            print(f"  → Wavelength: {result['wavelength']:.2f} m" if not np.isnan(result['wavelength']) else "  → Wavelength: N/A")
             print(f"  → Celerity: {result['wave_celerity']:.3f} m/s" if not np.isnan(result['wave_celerity']) else "  → Celerity: N/A")
             print(f"  → Water Depth: {result['water_depth']:.2f} m" if not np.isnan(result['water_depth']) else "  → Water Depth: N/A")
 
@@ -301,8 +338,15 @@ class CoastCamsWorkflow:
         timestamps = [r['timestamp'] for r in all_results]
         shorelines = [r['shoreline_mean'] for r in all_results]
         wave_heights = [r['wave_height'] for r in all_results]
-        wave_periods = [r['wave_period'] for r in all_results]
+        wave_periods_mean = [r['wave_period_mean'] for r in all_results]
+        wave_periods_peak = [r['wave_period_peak'] for r in all_results]
         wave_celerities = [r['wave_celerity'] for r in all_results]
+        wavelengths = [r['wavelength'] for r in all_results]
+        wave_energies = [r['wave_energy'] for r in all_results]
+        depths_shallow = [r['depth_shallow'] for r in all_results]
+        roller_lengths = [r['roller_length'] for r in all_results]
+        breakpoint_locations = [r['breakpoint_location'] for r in all_results]
+        breakpoint_depths = [r['breakpoint_depth'] for r in all_results]
 
         # ===== MATLAB Depth Smoothing Approach =====
         # In MATLAB (S01_AnalysisTimestackImages.m, lines 252-264):
@@ -407,6 +451,40 @@ class CoastCamsWorkflow:
         print(f"Water depths (per timestack, spatially averaged): {water_depths_array}")
         print(f"Mean water depth across all: {np.nanmean(water_depths_array):.3f} m")
 
+        # Calculate RTR (Relative Tidal Range) - MATLAB lines 274-278
+        # Level_TS = nanmean(WaveCelerity, 2);
+        # nRTR_thresh = Level_TS - min(Level_TS);
+        # nRTR_thresh(nRTR_thresh < 0.2) = NaN; % threshold to avoid dividing by 0
+        # RTR = hs./nRTR_thresh;
+        water_levels = np.array(wave_celerities)  # Use celerity as water level proxy
+        min_water_level = np.nanmin(water_levels)
+        nRTR_thresh = water_levels - min_water_level
+        nRTR_thresh[nRTR_thresh < 0.2] = np.nan  # Avoid division by near-zero
+        rtrs = np.array(wave_heights) / nRTR_thresh
+        print(f"RTR (Relative Tidal Range): mean={np.nanmean(rtrs):.3f}, range=[{np.nanmin(rtrs):.3f}, {np.nanmax(rtrs):.3f}]")
+
+        # Calculate shallow water SLA (SLA_S) using celerity (MATLAB line 266)
+        # SLA_S = Csmooth_S - nanmean(Csmooth_S)
+        celerity_array_2d = []
+        for r in all_results:
+            if r.get('celerity_array') is not None:
+                celerity_array_2d.append(r['celerity_array'])
+
+        if len(celerity_array_2d) > 0:
+            min_len = min(len(arr) for arr in celerity_array_2d)
+            celerity_matrix = np.array([arr[:min_len] for arr in celerity_array_2d])
+            # Apply spatial smoothing
+            celerity_matrix_smooth = np.zeros_like(celerity_matrix)
+            for i in range(celerity_matrix.shape[0]):
+                celerity_matrix_smooth[i, :] = uniform_filter1d(
+                    celerity_matrix[i, :], size=30, mode='nearest'
+                )
+            sla_shallow_matrix = celerity_matrix_smooth - np.nanmean(celerity_matrix_smooth)
+            sla_shallow = np.nanmean(sla_shallow_matrix, axis=1)  # Average across space
+            print(f"SLA_S (shallow water): mean={np.nanmean(sla_shallow):.3f} m")
+        else:
+            sla_shallow = np.full(len(all_results), np.nan)
+
         # Build average timestack matrix (MATLAB line 281: Stack_av)
         # Extract average timestack profiles from all results
         avg_timestack_profiles = []
@@ -429,22 +507,33 @@ class CoastCamsWorkflow:
             'timestamps': timestamps,
             'shoreline_positions': np.array(shorelines),
             'wave_heights_timeseries': np.array(wave_heights),
-            'wave_periods_timeseries': np.array(wave_periods),
+            'wave_periods_timeseries': np.array(wave_periods_mean),
+            'wave_periods_peak_timeseries': np.array(wave_periods_peak),
             'celerities': np.array(wave_celerities),
+            'wavelengths': np.array(wavelengths),
+            'wave_energies': np.array(wave_energies),
             'depths': water_depths_array,
-            'sla_values': slas,
+            'depths_shallow': np.array(depths_shallow),
+            'roller_lengths': np.array(roller_lengths),
+            'breakpoint_locations': np.array(breakpoint_locations),
+            'breakpoint_depths': np.array(breakpoint_depths),
+            'sla_values': slas,  # SLA_L (linear wave theory)
+            'sla_shallow_values': sla_shallow,  # SLA_S (shallow water)
+            'rtr_values': rtrs,  # Relative Tidal Range
             'beach_slope': beach_slope,
             # Averaged bathymetry profile
             'depths_smoothed': averaged_depth_profile,
             'cross_shore_positions': bathymetry_positions,
             # Aggregate statistics
             'mean_Hs': np.nanmean(wave_heights),
-            'mean_Tm': np.nanmean(wave_periods),
+            'mean_Tm': np.nanmean(wave_periods_mean),
+            'mean_Tp': np.nanmean(wave_periods_peak),
             'mean_celerity': np.nanmean(wave_celerities),
             'mean_depth': np.nanmean(water_depths_array),
             # For MATLAB-style visualization
             'average_timestack': average_timestack,
             'sla_matrix': sla_matrix,
+            'sla_shallow_matrix': sla_shallow_matrix if 'sla_shallow_matrix' in locals() else None,
         }
 
     def _detect_shorelines(self):
@@ -616,42 +705,40 @@ class CoastCamsWorkflow:
         self.results['timestamps'] = self.image_loader.timestamps
 
     def _export_results(self):
-        """Export results to files."""
+        """Export results to files matching MATLAB timetable format."""
         timestamps = self.results.get('timestamps', [])
 
         if len(timestamps) == 0:
             print("Warning: No timestamps available for export")
             return
 
-        # Create DataFrame
+        # Create DataFrame matching MATLAB timetable columns:
+        # {'BreakPointLocation', 'BreakpointDepth', 'Hs', 'WaveEnergy', 'RollerLength',
+        #  'WaveCelerity', 'Tp', 'Tm', 'WaveLength', 'WaterDepth', 'ShorelinePosition',
+        #  'SLA_S', 'SLA_L', 'RTR', 'Bathymetry'}
         data = {
             'Timestamp': timestamps,
+            'BreakPointLocation': self.results.get('breakpoint_locations', []),
+            'BreakpointDepth': self.results.get('breakpoint_depths', []),
+            'Hs': self.results.get('wave_heights_timeseries', []),
+            'WaveEnergy': self.results.get('wave_energies', []),
+            'RollerLength': self.results.get('roller_lengths', []),
+            'WaveCelerity': self.results.get('celerities', []),
+            'Tp': self.results.get('wave_periods_peak_timeseries', []),
+            'Tm': self.results.get('wave_periods_timeseries', []),
+            'WaveLength': self.results.get('wavelengths', []),
+            'WaterDepth': self.results.get('depths', []),
+            'ShorelinePosition': self.results.get('shoreline_positions', []),
+            'SLA_S': self.results.get('sla_shallow_values', []),
+            'SLA_L': self.results.get('sla_values', []),
+            'RTR': self.results.get('rtr_values', []),
+            'Bathymetry': self.results.get('depths', []),  # Same as WaterDepth
         }
 
-        # Add shoreline positions
-        if 'shoreline_positions' in self.results:
-            data['ShorelinePosition_pixels'] = self.results['shoreline_positions']
-            data['ShorelinePosition_m'] = (self.results['shoreline_positions'] *
-                                          self.config.pixel_resolution)
-
-        # Add wave parameters (per-image values)
-        if 'wave_heights_timeseries' in self.results:
-            data['WaveHeight_m'] = self.results['wave_heights_timeseries']
-
-        if 'wave_periods_timeseries' in self.results:
-            data['WavePeriod_s'] = self.results['wave_periods_timeseries']
-
-        if 'celerities' in self.results:
-            data['WaveCelerity_m_s'] = self.results['celerities']
-
-        if 'depths' in self.results:
-            data['WaterDepth_m'] = self.results['depths']
-
-        # Add SLA
-        if 'sla_values' in self.results:
-            data['SeaLevelAnomaly_m'] = self.results['sla_values']
-
         df = pd.DataFrame(data)
+
+        # Set Timestamp as index to create timetable (like MATLAB)
+        df.set_index('Timestamp', inplace=True)
 
         # Export to CSV
         output_file = os.path.join(
@@ -671,15 +758,17 @@ class CoastCamsWorkflow:
         timestamps = self.results.get('timestamps', [])
         print(f"Number of timestamps: {len(timestamps)}")
 
-        # Plot MATLAB-style summary (new!)
+        # Plot MATLAB-style summary matching plot_coastcams_main(Time_TS, Stack_av, SLA_S, Hs_TS, Tp_TS, rotation)
         if ('average_timestack' in self.results and
             'wave_heights_timeseries' in self.results and
             len(timestamps) > 0):
             print("Plotting MATLAB-style summary...")
+            # Use SLA_S (shallow water SLA) to match MATLAB
+            sla_for_plot = self.results.get('sla_shallow_matrix', self.results.get('sla_matrix', None))
             self.visualizer.plot_matlab_style_summary(
                 timestamps=timestamps,
                 average_timestack=self.results['average_timestack'],
-                sla_matrix=self.results.get('sla_matrix', None),
+                sla_matrix=sla_for_plot,
                 wave_heights=self.results['wave_heights_timeseries'],
                 wave_periods=self.results['wave_periods_timeseries'],
                 rotation=self.config.rotation_angle
