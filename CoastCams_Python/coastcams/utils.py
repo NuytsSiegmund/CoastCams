@@ -120,9 +120,12 @@ def linear_wave_celerity(period: float, depth: float, g: float = 9.81) -> float:
 
 
 def calculate_depth_from_celerity(celerity: float, period: float,
-                                  g: float = 9.81) -> float:
+                                  g: float = 9.81, precision: float = 0.01) -> float:
     """
     Calculate water depth from wave celerity and period using linear wave theory.
+
+    Implements MATLAB's LinearC function using Newton-Raphson iteration.
+    Matches LinearC.m lines 1-20.
 
     Parameters
     ----------
@@ -132,6 +135,8 @@ def calculate_depth_from_celerity(celerity: float, period: float,
         Wave period in seconds
     g : float, optional
         Gravitational acceleration (default: 9.81 m/s^2)
+    precision : float, optional
+        Convergence tolerance (default: 0.01)
 
     Returns
     -------
@@ -139,28 +144,43 @@ def calculate_depth_from_celerity(celerity: float, period: float,
         Estimated water depth in meters
     """
     if celerity <= 0 or period <= 0:
-        return 0.0
+        return np.nan
 
-    omega = 2 * np.pi / period
+    # MATLAB LinearC algorithm
+    omega = 2 * np.pi / period  # Angular frequency
     k = omega / celerity  # Wavenumber
 
-    # Solve for depth from dispersion relation
-    # omega^2 = g*k*tanh(k*h)
-    # Iteratively solve for h
-    h = celerity * period / 2  # Initial guess
+    # Initial guess from shallow water approximation (MATLAB line 9)
+    d = celerity**2 / g
 
-    for _ in range(20):
-        tanh_kh = (omega**2) / (g * k)
-        if tanh_kh >= 1:
-            tanh_kh = 0.9999
-        kh = np.arctanh(tanh_kh)
-        h_new = kh / k
+    # Newton-Raphson iteration
+    max_iterations = 100
+    for iteration in range(max_iterations):
+        d_old = d
 
-        if abs(h_new - h) < 1e-6:
+        # Dispersion relation residual: omega^2 - g*k*tanh(k*d)
+        # MATLAB line 13
+        dispe = omega**2 - g * k * np.tanh(k * d)
+
+        # Derivative of dispersion relation w.r.t. d
+        # MATLAB line 14
+        fdispe = -g * (k**2) / (np.cosh(k * d)**2)
+
+        # Newton-Raphson step (MATLAB line 15)
+        if abs(fdispe) < 1e-10:
+            # Avoid division by very small number
             break
-        h = h_new
+        d = d - dispe / fdispe
 
-    return max(h, 0.0)
+        # Check convergence (MATLAB line 10)
+        if abs(d_old - d) < precision:
+            break
+
+    # Return NaN if depth is negative or unrealistic
+    if d < 0 or d > 1000:
+        return np.nan
+
+    return d
 
 
 def moving_average(data: np.ndarray, window: int) -> np.ndarray:

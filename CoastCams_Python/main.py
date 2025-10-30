@@ -655,9 +655,12 @@ class CoastCamsWorkflow:
             print(f"  Warning: No celerities from correlation, using default=5.0 m/s")
             celerities_full = np.full(num_positions, 5.0)
 
-        # Use mean wave period for all positions (matching MATLAB approach)
-        mean_period = wave_results.get('mean_Tm', 8.0)
-        wave_periods_full = np.full(num_positions, mean_period)
+        # Use PEAK wave period for all positions (matching MATLAB line 247)
+        # MATLAB: [df] = LinearC(Tp, WaveCelerity(i,:), 0.01);
+        # Tp is the PEAK period (scalar), not mean period
+        peak_period = wave_results.get('mean_Tp', wave_results.get('mean_Tm', 8.0))
+        print(f"  Using peak period Tp = {peak_period:.2f}s for depth calculation")
+        wave_periods_full = np.full(num_positions, peak_period)
 
         # Estimate depth profile across full spatial domain
         bathymetry_results = self.bathymetry_estimator.estimate_depth_profile(
