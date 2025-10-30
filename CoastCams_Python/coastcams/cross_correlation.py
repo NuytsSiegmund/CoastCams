@@ -135,10 +135,12 @@ class CrossCorrelationAnalyzer:
         """
         Extract wave celerity and wavelength from timestack.
 
+        Uses MATLAB-style algorithm: fixed time lag, variable spatial lag.
+
         Parameters
         ----------
         timestack : np.ndarray
-            2D timestack array
+            2D timestack array (space x time)
 
         Returns
         -------
@@ -147,77 +149,162 @@ class CrossCorrelationAnalyzer:
         """
         results = {}
 
-        # Compute phase velocity using cross-correlation at different lags
-        celerities = []
-        wavelengths = []
-        periods = []
-
-        num_positions = timestack.shape[0]
-        positions = np.arange(0, num_positions - self.correlation_spacing,
-                            self.correlation_spacing)
-
-        for pos in positions:
-            # Get two spatial locations
-            ts1 = timestack[pos, :]
-            ts2 = timestack[pos + self.correlation_spacing, :]
-
-            # Compute cross-correlation
-            cc = signal.correlate(ts2, ts1, mode='full')
-            lags = signal.correlation_lags(len(ts2), len(ts1), mode='full')
-
-            # Find peak correlation
-            peak_idx = np.argmax(cc)
-            time_lag = lags[peak_idx] * self.dt
-
-            if time_lag > 0:
-                # Compute celerity
-                distance = self.correlation_spacing * self.dx
-                celerity = distance / time_lag
-                celerities.append(celerity)
-
-                # Estimate period from autocorrelation
-                autocorr = signal.correlate(ts1, ts1, mode='full')
-                autocorr = autocorr[len(autocorr)//2:]
-
-                # Find first peak after zero lag
-                if len(autocorr) > 10:
-                    peaks = signal.find_peaks(autocorr)[0]
-                    if len(peaks) > 0:
-                        period = peaks[0] * self.dt
-                        periods.append(period)
-
-                        # Compute wavelength
-                        wavelength = celerity * period
-                        wavelengths.append(wavelength)
+        # Use MATLAB-style cross-correlation (fixed time lag, variable spatial lag)
+        celerities = self._compute_celerity_matlab_style(timestack)
 
         # Store results
-        results['celerities'] = np.array(celerities)
-        results['wavelengths'] = np.array(wavelengths)
-        results['periods'] = np.array(periods)
+        results['celerities'] = celerities
 
         # Compute mean values
-        if len(celerities) > 0:
-            results['mean_celerity'] = np.mean(celerities)
-            results['std_celerity'] = np.std(celerities)
+        valid_celerities = celerities[~np.isnan(celerities)]
+        if len(valid_celerities) > 0:
+            results['mean_celerity'] = np.mean(valid_celerities)
+            results['std_celerity'] = np.std(valid_celerities)
         else:
             results['mean_celerity'] = np.nan
             results['std_celerity'] = np.nan
 
-        if len(wavelengths) > 0:
-            results['mean_wavelength'] = np.mean(wavelengths)
-            results['std_wavelength'] = np.std(wavelengths)
-        else:
-            results['mean_wavelength'] = np.nan
-            results['std_wavelength'] = np.nan
-
-        if len(periods) > 0:
-            results['mean_period'] = np.mean(periods)
-            results['std_period'] = np.std(periods)
-        else:
-            results['mean_period'] = np.nan
-            results['std_period'] = np.nan
+        # Note: wavelengths and periods computed elsewhere
+        results['wavelengths'] = np.array([])
+        results['periods'] = np.array([])
+        results['mean_wavelength'] = np.nan
+        results['std_wavelength'] = np.nan
+        results['mean_period'] = np.nan
+        results['std_period'] = np.nan
 
         return results
+
+    def _compute_celerity_matlab_style(self, timestack: np.ndarray) -> np.ndarray:
+        """
+        Compute wave celerity using MATLAB's CrossCorrelation_CoastCams algorithm.
+
+        Algorithm:
+        1. Use FIXED time lag (dpha = 1 second, converted to frames)
+        2. For each spatial position, compute correlation at different spatial lags
+        3. Find spatial lag that maximizes correlation
+        4. Convert to velocity: spatial_lag / time_lag
+
+        Parameters
+        ----------
+        timestack : np.ndarray
+            2D timestack array (space x time) - transposed from MATLAB!
+            MATLAB: A2(time, space)
+            Python: timestack(space, time)
+
+        Returns
+        -------
+        np.ndarray
+            Array of celerities at each spatial position (in m/s)
+        """
+        # Input timestack is already (time x space) format from main.py
+        # Example: (1680, 689) = (time points, spatial positions)
+        A2 = timestack
+        print(f"  Timestack shape for correlation: {A2.shape} (time x space)")
+
+        # Detrend (remove linear trend from each column)
+        from scipy.signal import detrend
+        A2 = detrend(A2, axis=0, type='linear')
+
+        nt, nc = A2.shape  # nt = time points, nc = spatial points
+        print(f"  After detrend: nt={nt} time points, nc={nc} spatial points")
+
+        # Parameters (matching MATLAB)
+        dpha = 1.0  # Time lag in seconds
+        dc = self.correlation_spacing  # Spatial window (100 pixels)
+        dc = int(np.round(dc / 2) * 2)  # Ensure even
+
+        n = int(np.floor(dpha / self.dt))  # Time lag in frames
+
+        # Validate
+        if n <= 0 or n >= nt:
+            print(f"  Warning: Invalid time lag n={n} (nt={nt}, dt={self.dt})")
+            return np.full(nc, np.nan)
+
+        if nc < dc:
+            print(f"  Warning: Spatial dimension {nc} < dc={dc}")
+            return np.full(nc, np.nan)
+
+        # Preallocate correlation matrix
+        # R2M will store correlation profiles for each spatial position
+        num_positions = nc - dc + 1
+        R2M = np.zeros((num_positions, dc - 1))
+
+        # For each spatial position
+        pos_idx = 0
+        for ic in range(int(dc/2), int(nc - dc/2)):
+            R2 = np.zeros(dc - 1)
+
+            # For each spatial lag
+            for lc in range(1, dc):
+                pos1 = ic - int(dc/2)
+                pos2 = ic - int(dc/2) + lc - 1
+
+                # Validate indices
+                if pos1 >= 0 and pos2 < nc and pos1 < nc and pos2 >= 0:
+                    # Get time series at two positions with time lag
+                    # Position 1: later times (n+1:nt)
+                    # Position 2: earlier times (1:nt-n)
+                    ts1 = A2[n:nt, pos1]  # Python: 0-indexed, so n:nt is equivalent to n+1:nt in MATLAB
+                    ts2 = A2[0:nt-n, pos2]
+
+                    # Compute correlation coefficient
+                    if len(ts1) > 1 and len(ts2) > 1 and np.std(ts1) > 0 and np.std(ts2) > 0:
+                        corr = np.corrcoef(ts1, ts2)[0, 1]
+                        R2[lc - 1] = corr
+                    else:
+                        R2[lc - 1] = np.nan
+                else:
+                    R2[lc - 1] = np.nan
+
+            if pos_idx < num_positions:
+                R2M[pos_idx, :] = R2
+                pos_idx += 1
+
+        # Debug: show sample correlation profile
+        if R2M.shape[0] > 0:
+            sample_profile = R2M[R2M.shape[0]//2, :]  # Middle position
+            print(f"  Sample correlation profile (middle position):")
+            print(f"    First 10 lags: {sample_profile[:10]}")
+            print(f"    Last 10 lags: {sample_profile[-10:]}")
+
+        # Find spatial lag with maximum correlation for each position
+        spatial_lags = np.argmax(R2M, axis=1) + 1  # +1 because lc starts at 1
+
+        # Debug: check correlation values
+        max_corr = np.max(R2M, axis=1)
+        mean_max_corr = np.mean(max_corr)
+        print(f"  Cross-correlation debug:")
+        print(f"    R2M shape: {R2M.shape}")
+        print(f"    Max correlation values: mean={mean_max_corr:.3f}, range=[{np.min(max_corr):.3f}, {np.max(max_corr):.3f}]")
+        print(f"    Spatial lags: mean={np.mean(spatial_lags):.1f}, range=[{np.min(spatial_lags)}, {np.max(spatial_lags)}]")
+        print(f"    Time lag n={n} frames ({n*self.dt:.1f}s), dpha={dpha}s")
+
+        # Convert to velocity: spatial_lag / time_lag
+        # spatial_lag is in pixels, dpha is in seconds
+        # Result is in pixels/second
+        velocities_pixels_per_sec = spatial_lags / dpha
+
+        # Convert from pixels/second to m/s
+        # Method 1: Multiply by pixel resolution
+        # Method 2 (MATLAB): Divide by 10 (equivalent when res=0.1)
+        velocities_ms = velocities_pixels_per_sec * self.dx
+
+        # Apply moving average (MATLAB line 242: movmean(..., 10))
+        from scipy.ndimage import uniform_filter1d
+        window = 10
+        velocities_smooth = uniform_filter1d(velocities_ms, size=window, mode='nearest')
+
+        # Interpolate to full spatial grid (R2M covers only central positions)
+        # Pad with NaN for positions outside the correlation window
+        celerities_full = np.full(nc, np.nan)
+        start_idx = int(dc/2)
+        end_idx = start_idx + len(velocities_smooth)
+        if end_idx > nc:
+            end_idx = nc
+            velocities_smooth = velocities_smooth[:nc - start_idx]
+        celerities_full[start_idx:end_idx] = velocities_smooth
+
+        return celerities_full
 
     def compute_phase_velocity(self, timestack: np.ndarray,
                                position1: int, position2: int) -> float:

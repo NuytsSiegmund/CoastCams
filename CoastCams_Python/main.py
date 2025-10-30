@@ -503,31 +503,52 @@ class CoastCamsWorkflow:
         cross_shore_positions_full = wave_results.get('cross_shore_positions', np.array([]))
         num_positions = len(cross_shore_positions_full)
 
-        # Get sparse celerities from correlation analysis
+        # Get celerities from MATLAB-style correlation analysis
         if 'celerities' in correlation_results and len(correlation_results['celerities']) > 0:
-            celerities_sparse = correlation_results['celerities']
+            celerities_full = correlation_results['celerities']
 
-            # Create position indices for sparse celerities (every 100 pixels by default)
-            spacing = self.correlation_analyzer.correlation_spacing
-            num_sparse_points = len(celerities_sparse)
-            sparse_indices = np.arange(0, num_sparse_points * spacing, spacing)
+            # MATLAB-style correlation returns full array (with NaN at edges)
+            # If length doesn't match, pad or trim
+            if len(celerities_full) < num_positions:
+                # Pad with NaN
+                padded = np.full(num_positions, np.nan)
+                padded[:len(celerities_full)] = celerities_full
+                celerities_full = padded
+            elif len(celerities_full) > num_positions:
+                # Trim
+                celerities_full = celerities_full[:num_positions]
 
-            # Ensure we don't exceed the spatial domain
-            sparse_indices = sparse_indices[:num_sparse_points]
+            # Count valid celerities
+            num_valid = np.sum(~np.isnan(celerities_full))
+            print(f"  Celerities: {num_valid}/{num_positions} valid values")
 
-            # Interpolate celerities to full spatial grid (matching MATLAB line 66)
-            from scipy.interpolate import interp1d
-            if len(sparse_indices) >= 2 and len(celerities_sparse) >= 2:  # Need at least 2 points
-                interp_func = interp1d(sparse_indices, celerities_sparse,
-                                       kind='linear', bounds_error=False, fill_value='extrapolate')
-                celerities_full = interp_func(np.arange(num_positions))
+            # Interpolate NaN values if we have enough valid points
+            if num_valid >= 2:
+                from scipy.interpolate import interp1d
+                valid_mask = ~np.isnan(celerities_full)
+                valid_indices = np.where(valid_mask)[0]
+                valid_celerities = celerities_full[valid_mask]
+
+                # Interpolate (but don't extrapolate too far)
+                interp_func = interp1d(valid_indices, valid_celerities,
+                                      kind='linear', bounds_error=False,
+                                      fill_value=(valid_celerities[0], valid_celerities[-1]))
+                all_indices = np.arange(num_positions)
+                celerities_full = interp_func(all_indices)
                 celerities_full = np.abs(celerities_full)  # Ensure positive
+            elif num_valid > 0:
+                # Use mean of valid values
+                mean_celerity = np.nanmean(celerities_full)
+                print(f"  Warning: Only {num_valid} valid celerities, using mean={mean_celerity:.2f} m/s")
+                celerities_full = np.full(num_positions, mean_celerity)
             else:
-                # Fall back to constant value if not enough points
-                celerities_full = np.full(num_positions, np.nanmean(celerities_sparse))
+                # No valid celerities - use default
+                print(f"  Warning: No valid celerities found, using default=5.0 m/s")
+                celerities_full = np.full(num_positions, 5.0)
         else:
             # Estimate celerities from wave periods if correlation failed
-            celerities_full = np.full(num_positions, 5.0)  # Default estimate
+            print(f"  Warning: No celerities from correlation, using default=5.0 m/s")
+            celerities_full = np.full(num_positions, 5.0)
 
         # Use mean wave period for all positions (matching MATLAB approach)
         mean_period = wave_results.get('mean_Tm', 8.0)
