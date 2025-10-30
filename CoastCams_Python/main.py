@@ -355,7 +355,18 @@ class CoastCamsWorkflow:
 
             print(f"Applied MATLAB smoothing: movmean(10) + smooth2(Nr=1, Nc=30)")
 
-            # Compute mean depth for each timestack from smoothed profiles
+            # CRITICAL FIX: Compute SLA from the 2D matrix FIRST (matches MATLAB line 266-267)
+            # MATLAB: SLA_L = Csmooth_L - nanmean(Csmooth_L)
+            # This preserves the spatial structure during SLA calculation
+            sla_matrix = depth_matrix_smooth - np.nanmean(depth_matrix_smooth)
+            print(f"SLA matrix shape: {sla_matrix.shape}")
+            print(f"  SLA 2D range: {np.nanmin(sla_matrix):.3f} to {np.nanmax(sla_matrix):.3f} m")
+
+            # Extract per-timestack SLA values by averaging across space
+            # This gives one SLA value per timestack for the CSV
+            slas = np.nanmean(sla_matrix, axis=1)  # Shape: (num_timestacks,)
+
+            # Also compute mean depth per timestack (for CSV output)
             water_depths_array = np.nanmean(depth_matrix_smooth, axis=1)
 
             # Compute averaged bathymetry profile across all timestacks
@@ -377,19 +388,24 @@ class CoastCamsWorkflow:
             print(f"Averaged bathymetry profile: {len(averaged_depth_profile)} points")
             print(f"  Depth range: {np.nanmin(averaged_depth_profile):.2f} to {np.nanmax(averaged_depth_profile):.2f} m")
             print(f"  Beach slope from bathymetry: {beach_slope:.4f} ({beach_slope*100:.2f}%)")
+            print(f"Per-timestack SLA values (spatially averaged): {slas}")
+            print(f"  SLA 1D range: {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
         else:
+            # Fallback if no depth profiles available
+            print("⚠️  WARNING: No depth profiles available, using fallback SLA calculation")
+            print("   This may produce less accurate SLA values!")
             water_depths_array = np.array([r['water_depth'] for r in all_results])
             averaged_depth_profile = np.array([])
             bathymetry_positions = np.array([])
             beach_slope = 0.02
+            sla_matrix = None
 
-        # Calculate SLA using MATLAB approach: SLA = WaterDepth - mean(WaterDepth)
-        mean_water_depth = np.nanmean(water_depths_array)
-        slas = water_depths_array - mean_water_depth
+            # Compute SLA from mean depths (less accurate fallback)
+            mean_water_depth = np.nanmean(water_depths_array)
+            slas = water_depths_array - mean_water_depth
 
-        print(f"Water depths: {water_depths_array}")
-        print(f"Mean water depth: {mean_water_depth:.3f} m")
-        print(f"SLA range: {np.nanmin(slas):.3f} to {np.nanmax(slas):.3f} m")
+        print(f"Water depths (per timestack, spatially averaged): {water_depths_array}")
+        print(f"Mean water depth across all: {np.nanmean(water_depths_array):.3f} m")
 
         # Build average timestack matrix (MATLAB line 281: Stack_av)
         # Extract average timestack profiles from all results
@@ -408,13 +424,6 @@ class CoastCamsWorkflow:
             average_timestack = None
             print("Warning: No average timestack profiles available")
 
-        # Build SLA matrix if depth_matrix_smooth is available
-        if len(depth_profiles_list) > 0:
-            sla_matrix = depth_matrix_smooth - np.nanmean(depth_matrix_smooth)  # (timestacks, space)
-            print(f"SLA matrix shape: {sla_matrix.shape}")
-        else:
-            sla_matrix = None
-
         # Store in results dictionary
         self.results = {
             'timestamps': timestamps,
@@ -432,7 +441,7 @@ class CoastCamsWorkflow:
             'mean_Hs': np.nanmean(wave_heights),
             'mean_Tm': np.nanmean(wave_periods),
             'mean_celerity': np.nanmean(wave_celerities),
-            'mean_depth': mean_water_depth,
+            'mean_depth': np.nanmean(water_depths_array),
             # For MATLAB-style visualization
             'average_timestack': average_timestack,
             'sla_matrix': sla_matrix,
