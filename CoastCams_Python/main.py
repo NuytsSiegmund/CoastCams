@@ -177,7 +177,23 @@ class CoastCamsWorkflow:
             # Extract roller/breaking parameters from wave analysis
             roller_length = wave_results.get('roller_length', np.nan)
             breakpoint_location = wave_results.get('break_location', np.nan)
-            breakpoint_depth = wave_results.get('break_depth', np.nan)
+
+            # Calculate breaking depth using shallow water approximation at breaking location
+            # MATLAB line 82-83: BD = depth_s(round(nanmean(PosX)))
+            # where depth_s = C^2 / 9.81
+            breakpoint_depth = np.nan
+            if not np.isnan(breakpoint_location) and not np.isnan(depth_shallow):
+                # Use the shallow water depth at this location as the breaking depth
+                breakpoint_depth = depth_shallow
+            elif not np.isnan(breakpoint_location) and bathymetry_results.get('depths_filtered') is not None:
+                # Try to get depth from bathymetry profile at breaking location
+                depths_profile = bathymetry_results['depths_filtered']
+                positions = bathymetry_results.get('cross_shore_positions', [])
+                if len(positions) > 0 and len(depths_profile) > 0:
+                    # Find closest position to breakpoint
+                    idx = np.argmin(np.abs(np.array(positions) - breakpoint_location))
+                    if idx < len(depths_profile):
+                        breakpoint_depth = depths_profile[idx]
 
             # Calculate RTR (Relative Tidal Range) - matching MATLAB lines 274-278
             # RTR = Hs / (water_level - min_water_level), but avoid dividing by small numbers
@@ -765,12 +781,15 @@ class CoastCamsWorkflow:
             print("Plotting MATLAB-style summary...")
             # Use SLA_S (shallow water SLA) to match MATLAB
             sla_for_plot = self.results.get('sla_shallow_matrix', self.results.get('sla_matrix', None))
+            # Get water levels (mean sea level / water depth) for plotting
+            water_levels = self.results.get('depths', None)
             self.visualizer.plot_matlab_style_summary(
                 timestamps=timestamps,
                 average_timestack=self.results['average_timestack'],
                 sla_matrix=sla_for_plot,
                 wave_heights=self.results['wave_heights_timeseries'],
                 wave_periods=self.results['wave_periods_timeseries'],
+                water_levels=water_levels,
                 rotation=self.config.rotation_angle
             )
 

@@ -187,11 +187,39 @@ class WaveAnalyzer:
                     results['mean_Hs'] = Hs
                     results['mean_Hm'] = Hm
                     print(f"  Wave height (photogrammetric): Hs = {Hs:.3f}m, Hm = {Hm:.3f}m")
+
+                    # Calculate additional MATLAB parameters
+                    # Roller length (MATLAB line 74: rolL = dx.*Lwm)
+                    Lwm = np.nanmean(Lw, axis=0) if Lw.ndim > 1 else Lw
+                    if len(Lwm) > 0 and len(cross_shore_positions) > 1:
+                        dx = cross_shore_positions[1] - cross_shore_positions[0]  # Spatial resolution
+                        roller_length = dx * np.nanmean(Lwm)  # Mean roller length in meters
+                        results['roller_length'] = roller_length if not np.isnan(roller_length) else np.nan
+                        print(f"  Roller length: {results['roller_length']:.2f}m")
+                    else:
+                        results['roller_length'] = np.nan
+
+                    # Breaking point location (MATLAB lines 78-80: BreakLocs = X1(round(nanmean(PosX))))
+                    median_break_pos = int(np.round(np.nanmedian(PosX)))
+                    if 0 <= median_break_pos < len(cross_shore_positions):
+                        break_location = cross_shore_positions[median_break_pos]
+                        results['break_location'] = break_location
+                        print(f"  Break location: {break_location:.2f}m")
+                    else:
+                        results['break_location'] = np.nan
+
+                    # Breaking depth - need to calculate from bathymetry or use shallow water approximation
+                    # For now, mark as unavailable (will be filled from bathymetry later)
+                    results['break_depth'] = np.nan
+
                 else:
                     # Fallback to time series method
                     calibration_factor = 2.0
                     results['mean_Hs'] = Hs_from_ts * calibration_factor
                     results['mean_Hm'] = results['mean_Hs'] * 0.7
+                    results['roller_length'] = np.nan
+                    results['break_location'] = np.nan
+                    results['break_depth'] = np.nan
                     print(f"  Wave height (fallback - time series): Hs = {results['mean_Hs']:.3f}m")
             else:
                 # No breaking waves detected, use fallback
@@ -199,6 +227,9 @@ class WaveAnalyzer:
                 calibration_factor = 2.0
                 results['mean_Hs'] = Hs_from_ts * calibration_factor
                 results['mean_Hm'] = results['mean_Hs'] * 0.7
+                results['roller_length'] = np.nan
+                results['break_location'] = np.nan
+                results['break_depth'] = np.nan
                 print(f"  Wave height (fallback): Hs = {results['mean_Hs']:.3f}m")
 
         except Exception as e:
@@ -207,7 +238,16 @@ class WaveAnalyzer:
             calibration_factor = 2.0
             results['mean_Hs'] = Hs_from_ts * calibration_factor
             results['mean_Hm'] = results['mean_Hs'] * 0.7
+            results['roller_length'] = np.nan
+            results['break_location'] = np.nan
+            results['break_depth'] = np.nan
             print(f"  Wave height (error fallback): Hs = {results['mean_Hs']:.3f}m")
+
+        # Ensure all parameters have default values
+        results.setdefault('roller_length', np.nan)
+        results.setdefault('break_location', np.nan)
+        results.setdefault('break_depth', np.nan)
+        results.setdefault('mean_Tp', results['mean_Tm'])  # Use Tm as fallback for Tp
 
         results['cross_shore_positions'] = cross_shore_positions
 

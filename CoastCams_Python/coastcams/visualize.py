@@ -50,6 +50,7 @@ class CoastCamsVisualizer:
                                  sla_matrix: Optional[np.ndarray],
                                  wave_heights: np.ndarray,
                                  wave_periods: np.ndarray,
+                                 water_levels: Optional[np.ndarray] = None,
                                  rotation: int = 270,
                                  filename: str = 'coastcams_matlab_summary.png'):
         """
@@ -57,7 +58,7 @@ class CoastCamsVisualizer:
 
         Matches plot_coastcams_main.m with 4 subplots:
         1. Average Timestack (grayscale image)
-        2. Sea Level Anomaly (SLA) as 2D colormap
+        2. Mean Sea Level (water depth) as 2D colormap
         3. Significant Wave Height time series
         4. Peak Wave Period time series
 
@@ -68,11 +69,13 @@ class CoastCamsVisualizer:
         average_timestack : np.ndarray
             Average intensity profile for each timestack (num_images × spatial_pixels)
         sla_matrix : np.ndarray, optional
-            SLA matrix (num_images × spatial_pixels)
+            SLA matrix (num_images × spatial_pixels) - not used if water_levels provided
         wave_heights : np.ndarray
             Significant wave heights for each timestamp
         wave_periods : np.ndarray
             Peak wave periods for each timestamp
+        water_levels : np.ndarray, optional
+            Mean sea level / water depth per timestamp (1D array)
         rotation : int
             Rotation angle (default: 270)
         filename : str
@@ -105,27 +108,31 @@ class CoastCamsVisualizer:
         ax1.set_ylabel('Cross-shore distance [pixels]', fontsize=12)
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
 
-        # Subplot 2: Sea Level Anomaly
-        if sla_matrix is not None and not np.all(np.isnan(sla_matrix)):
-            # Create time vector for SLA (linearly spaced)
+        # Subplot 2: Mean Sea Level (water depth)
+        if water_levels is not None and not np.all(np.isnan(water_levels)):
+            # Plot mean sea level as time series
+            ax2.plot(timestamps, water_levels, 'c.-', linewidth=2, markersize=6)
+            ax2.set_title('Mean Sea Level', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('Water Depth [m]', fontsize=12)
+            ax2.grid(True, alpha=0.3)
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        elif sla_matrix is not None and not np.all(np.isnan(sla_matrix)):
+            # Fallback: show SLA matrix if water levels not available
             time_sla = np.linspace(time_nums[0], time_nums[-1], sla_matrix.shape[0])
-
             im2 = ax2.imshow(sla_matrix.T, aspect='auto', cmap='jet',
                            extent=[time_sla[0], time_sla[-1], 0, sla_matrix.shape[1]],
                            origin='lower')
             ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
             ax2.set_ylabel('Cross-shore position [pixels]', fontsize=12)
             ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-
-            # Add colorbar
             cbar = plt.colorbar(im2, ax=ax2, orientation='vertical', pad=0.02)
             cbar.set_label('SLA [m]', fontsize=10)
         else:
-            ax2.text(0.5, 0.5, 'SLA data not available',
+            ax2.text(0.5, 0.5, 'Water level data not available',
                     transform=ax2.transAxes, ha='center', va='center',
                     fontsize=12, color='red')
-            ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
-            ax2.set_ylabel('Cross-shore position [pixels]', fontsize=12)
+            ax2.set_title('Mean Sea Level', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('Water Depth [m]', fontsize=12)
 
         # Subplot 3: Significant Wave Height
         ax3.plot(timestamps, wave_heights, 'r.-', linewidth=1.5, markersize=6)
