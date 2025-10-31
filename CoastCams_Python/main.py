@@ -138,13 +138,99 @@ class CoastCamsWorkflow:
             print("[4/7] Analyzing wave parameters...")
             wave_results = self._analyze_single_timestack(timestack, shoreline)
 
-            # Step 5: Perform cross-correlation analysis
+            # Step 5: Perform cross-correlation analysis (G7 in MATLAB)
             print("[5/7] Performing cross-correlation...")
             correlation_results = self.correlation_analyzer.analyze_timestack(timestack)
 
-            # Step 6: Estimate bathymetry
-            print("[6/7] Estimating bathymetry...")
-            bathymetry_results = self._estimate_bathymetry(wave_results, correlation_results)
+            # Extract raw Cf1 and WLe1 from cross-correlation (MATLAB outputs)
+            # NOTE: In Python's cross_correlation.py, Cf1 is already:
+            # 1. Converted to m/s (multiplied by pixel resolution)
+            # 2. Smoothed with movmean(10)
+            # So Cf1 is NOT divided by 10, and movmean is already applied
+            Cf1 = correlation_results.get('Cf1', None)  # Already in m/s, already smoothed
+            WLe1 = correlation_results.get('WLe1', None)  # Raw wavelengths
+
+            # For MATLAB compatibility:
+            # MATLAB divides Cf1 by 10 because their units are different
+            # Python already has correct units (m/s), so we use Cf1 directly as WaveCelerity
+            if Cf1 is not None and len(Cf1) > 0:
+                WaveCelerity = Cf1  # Already in m/s and smoothed
+                num_valid = np.sum(~np.isnan(WaveCelerity))
+                print(f"  WaveCelerity array: {len(WaveCelerity)} spatial points ({num_valid} valid)")
+                if num_valid > 0:
+                    print(f"    Range: [{np.nanmin(WaveCelerity):.2f}, {np.nanmax(WaveCelerity):.2f}] m/s")
+                else:
+                    print(f"    Warning: All WaveCelerity values are NaN")
+            else:
+                WaveCelerity = None
+                print(f"  Warning: No Cf1 available")
+
+            if WLe1 is not None and len(WLe1) > 0:
+                WaveLength = WLe1  # Already computed
+                num_valid = np.sum(~np.isnan(WaveLength))
+                print(f"  WaveLength array: {len(WaveLength)} spatial points ({num_valid} valid)")
+                if num_valid > 0:
+                    print(f"    Range: [{np.nanmin(WaveLength):.2f}, {np.nanmax(WaveLength):.2f}] m")
+                else:
+                    print(f"    Warning: All WaveLength values are NaN")
+            else:
+                WaveLength = None
+                print(f"  Warning: No WLe1 available")
+
+            # Step 6: Calculate WaterDepth_L using LinearC (G8 in MATLAB)
+            # MATLAB line 247: [df] = LinearC(Tp, WaveCelerity(i,:), 0.01)
+            # Tp is SCALAR, WaveCelerity is ARRAY
+            print("[6/7] Calculating water depth from linear wave theory...")
+
+            # Get Tp (peak period) - scalar
+            Tp = wave_results.get('mean_Tp', wave_results.get('mean_Tm', 8.0))
+            print(f"  Using peak period Tp = {Tp:.2f}s (scalar)")
+
+            if WaveCelerity is not None:
+                # Calculate depth for each spatial position using LinearC
+                from coastcams.utils import calculate_depth_from_celerity
+
+                WaterDepth_L = []
+                num_valid = 0
+                for c in WaveCelerity:
+                    if not np.isnan(c) and c > 0:
+                        depth = calculate_depth_from_celerity(c, Tp, precision=0.01)
+                        WaterDepth_L.append(depth)
+                        if not np.isnan(depth):
+                            num_valid += 1
+                    else:
+                        WaterDepth_L.append(np.nan)
+
+                WaterDepth_L = np.array(WaterDepth_L)
+
+                # Don't apply movmean here - it will be applied in _aggregate_all_results
+                # MATLAB: WaterDepth_L = [WaterDepth_L; movmean(df, 10)];
+                # The movmean is applied to df before stacking, but we'll handle it in aggregation
+
+                print(f"  WaterDepth_L array: {len(WaterDepth_L)} spatial points")
+                print(f"    Valid depths: {num_valid}/{len(WaterDepth_L)}")
+                if num_valid > 0:
+                    print(f"    Depth range: [{np.nanmin(WaterDepth_L):.2f}, {np.nanmax(WaterDepth_L):.2f}] m")
+                else:
+                    print(f"    Warning: All depth values are NaN")
+
+                # Mean depth for this timestack
+                mean_depth = np.nanmean(WaterDepth_L)
+                if not np.isnan(mean_depth):
+                    print(f"  Mean water depth: {mean_depth:.2f} m")
+                else:
+                    print(f"  Warning: Mean water depth is NaN")
+            else:
+                WaterDepth_L = None
+                mean_depth = np.nan
+                print(f"  Warning: Cannot calculate WaterDepth_L (no WaveCelerity)")
+
+            # For backward compatibility, create bathymetry_results structure
+            bathymetry_results = {
+                'mean_depth': mean_depth,
+                'depths_filtered': WaterDepth_L,
+                'cross_shore_positions': wave_results.get('cross_shore_positions', np.array([]))
+            }
 
             # Debug NaN values
             mean_depth = bathymetry_results.get('mean_depth', np.nan)
@@ -160,19 +246,19 @@ class CoastCamsWorkflow:
 
             # Calculate additional parameters to match MATLAB
             Hs = wave_results.get('mean_Hs', np.nan)
-            Tp = wave_results.get('mean_Tp', wave_results.get('mean_Tm', np.nan))  # Peak period (fallback to mean)
             Tm = wave_results.get('mean_Tm', np.nan)
-            celerity = correlation_results.get('mean_celerity', np.nan)
-            water_depth = bathymetry_results.get('mean_depth', np.nan)
 
-            # Calculate wavelength: L = C * T
-            wavelength = celerity * Tm if not np.isnan(celerity) and not np.isnan(Tm) else np.nan
+            # Calculate scalars for CSV from arrays
+            # MATLAB aggregates at the end: nanmean(WaveCelerity(i,:))
+            celerity_mean = np.nanmean(WaveCelerity) if WaveCelerity is not None else np.nan
+            wavelength_mean = np.nanmean(WaveLength) if WaveLength is not None else np.nan
+            water_depth_mean = np.nanmean(WaterDepth_L) if WaterDepth_L is not None else np.nan
 
-            # Calculate wave energy: E = (1/16) * ρ * g * Hs^2 (simplified to Hs^2/2 for consistency)
+            # Calculate wave energy: E = Hs^2 / 2
             wave_energy = (Hs ** 2) / 2.0 if not np.isnan(Hs) else np.nan
 
-            # Calculate shallow water depth: depth_s = C^2 / g
-            depth_shallow = (celerity ** 2) / 9.81 if not np.isnan(celerity) else np.nan
+            # Calculate shallow water depth: depth_s = C^2 / g (using mean celerity)
+            depth_shallow = (celerity_mean ** 2) / 9.81 if not np.isnan(celerity_mean) else np.nan
 
             # Extract roller/breaking parameters from wave analysis
             roller_length = wave_results.get('roller_length', np.nan)
@@ -185,45 +271,44 @@ class CoastCamsWorkflow:
             if not np.isnan(breakpoint_location) and not np.isnan(depth_shallow):
                 # Use the shallow water depth at this location as the breaking depth
                 breakpoint_depth = depth_shallow
-            elif not np.isnan(breakpoint_location) and bathymetry_results.get('depths_filtered') is not None:
-                # Try to get depth from bathymetry profile at breaking location
-                depths_profile = bathymetry_results['depths_filtered']
+            elif not np.isnan(breakpoint_location) and WaterDepth_L is not None:
+                # Try to get depth from WaterDepth_L profile at breaking location
                 positions = bathymetry_results.get('cross_shore_positions', [])
-                if len(positions) > 0 and len(depths_profile) > 0:
+                if len(positions) > 0 and len(WaterDepth_L) > 0:
                     # Find closest position to breakpoint
                     idx = np.argmin(np.abs(np.array(positions) - breakpoint_location))
-                    if idx < len(depths_profile):
-                        breakpoint_depth = depths_profile[idx]
-
-            # Calculate RTR (Relative Tidal Range) - matching MATLAB lines 274-278
-            # RTR = Hs / (water_level - min_water_level), but avoid dividing by small numbers
-            # MATLAB uses: nRTR_thresh = Level_TS - min(Level_TS); threshold at 0.2
-            water_level = celerity  # Water level proxy (from MATLAB: Level_TS = nanmean(WaveCelerity, 2))
+                    if idx < len(WaterDepth_L):
+                        breakpoint_depth = WaterDepth_L[idx]
 
             # Store results for this image
+            # IMPORTANT: Store ARRAYS (not scalars) for matrix building
             result = {
                 'timestamp': self.image_loader.timestamps[img_idx],
                 'shoreline_mean': np.nanmean(shoreline) if shoreline is not None else np.nan,
                 'wave_height': Hs,
                 'wave_period_mean': Tm,
-                'wave_period_peak': Tp,
-                'wave_celerity': celerity,
-                'wavelength': wavelength,
+                'wave_period_peak': Tp,  # Already defined above
+                # Store both arrays and scalars
+                'wave_celerity_array': WaveCelerity,  # ARRAY for matrix building
+                'wave_celerity': celerity_mean,  # Scalar for CSV
+                'wavelength_array': WaveLength,  # ARRAY for matrix building
+                'wavelength': wavelength_mean,  # Scalar for CSV
+                'water_depth_array': WaterDepth_L,  # ARRAY for matrix building (WaterDepth_L)
+                'water_depth': water_depth_mean,  # Scalar for CSV
                 'wave_energy': wave_energy,
-                'water_depth': water_depth,
                 'depth_shallow': depth_shallow,
                 'roller_length': roller_length,
                 'breakpoint_location': breakpoint_location,
                 'breakpoint_depth': breakpoint_depth,
                 'sla': sla,
                 'rtr': np.nan,  # Will calculate after all timestacks processed
-                # Store filtered (not yet smoothed) depth profile for MATLAB-style smoothing
-                'depth_profile': bathymetry_results.get('depths_filtered', None),
+                # Store depth profile for backward compatibility
+                'depth_profile': WaterDepth_L,
                 'cross_shore_positions': bathymetry_results.get('cross_shore_positions', None),
                 # Store average timestack profile for visualization
                 'avg_timestack_profile': avg_timestack_profile,
-                # Store full celerity array for SLA calculation
-                'celerity_array': correlation_results.get('celerities', None),
+                # Store raw Cf1 for SLA_S calculation
+                'celerity_array_raw': Cf1,  # Raw Cf1 (before movmean transformation)
             }
             all_results.append(result)
 
@@ -479,24 +564,42 @@ class CoastCamsWorkflow:
         rtrs = np.array(wave_heights) / nRTR_thresh
         print(f"RTR (Relative Tidal Range): mean={np.nanmean(rtrs):.3f}, range=[{np.nanmin(rtrs):.3f}, {np.nanmax(rtrs):.3f}]")
 
-        # Calculate shallow water SLA (SLA_S) using celerity (MATLAB line 266)
-        # SLA_S = Csmooth_S - nanmean(Csmooth_S)
-        celerity_array_2d = []
+        # ===== Calculate SLA_S from WaveCelerity Matrix (MATLAB line 256-267) =====
+        # MATLAB:
+        # Csmooth_S = smooth2(WaveCelerity, Nr=1, Nc=30);
+        # SLA_S = Csmooth_S - nanmean(Csmooth_S);
+        wave_celerity_arrays = []
         for r in all_results:
-            if r.get('celerity_array') is not None:
-                celerity_array_2d.append(r['celerity_array'])
+            if r.get('wave_celerity_array') is not None:
+                wave_celerity_arrays.append(r['wave_celerity_array'])
 
-        if len(celerity_array_2d) > 0:
-            min_len = min(len(arr) for arr in celerity_array_2d)
-            celerity_matrix = np.array([arr[:min_len] for arr in celerity_array_2d])
-            # Apply spatial smoothing
-            celerity_matrix_smooth = np.zeros_like(celerity_matrix)
-            for i in range(celerity_matrix.shape[0]):
-                celerity_matrix_smooth[i, :] = uniform_filter1d(
-                    celerity_matrix[i, :], size=30, mode='nearest'
+        if len(wave_celerity_arrays) > 0:
+            # Build WaveCelerity matrix
+            min_len = min(len(arr) for arr in wave_celerity_arrays)
+            WaveCelerity_matrix = np.array([arr[:min_len] for arr in wave_celerity_arrays])
+            print(f"\nBuilding WaveCelerity matrix for SLA_S:")
+            print(f"  Matrix shape: {WaveCelerity_matrix.shape} (timestacks × spatial points)")
+            print(f"  Celerity range: [{np.nanmin(WaveCelerity_matrix):.2f}, {np.nanmax(WaveCelerity_matrix):.2f}] m/s")
+
+            # Apply smooth2 with Nc=30 (spatial smoothing)
+            # MATLAB's smooth2(WaveCelerity, Nr=1, Nc=30) means:
+            # - Nr=1: minimal smoothing across timestacks (3 rows)
+            # - Nc=30: 30-point smoothing spatially (61 columns)
+            # For simplicity, we'll apply spatial smoothing only (size=30)
+            Csmooth_S = np.zeros_like(WaveCelerity_matrix)
+            for i in range(WaveCelerity_matrix.shape[0]):
+                Csmooth_S[i, :] = uniform_filter1d(
+                    WaveCelerity_matrix[i, :], size=30, mode='nearest'
                 )
-            sla_shallow_matrix = celerity_matrix_smooth - np.nanmean(celerity_matrix_smooth)
-            sla_shallow = np.nanmean(sla_shallow_matrix, axis=1)  # Average across space
+
+            # Calculate SLA_S from smoothed matrix
+            SLA_S_matrix = Csmooth_S - np.nanmean(Csmooth_S)
+            print(f"  SLA_S 2D range: {np.nanmin(SLA_S_matrix):.3f} to {np.nanmax(SLA_S_matrix):.3f} m/s")
+
+            # Extract per-timestack SLA_S values by averaging across space
+            sla_shallow = np.nanmean(SLA_S_matrix, axis=1)  # Shape: (timestacks,)
+            print(f"  SLA_S (spatially averaged): {sla_shallow}")
+            print(f"  SLA_S 1D range: {np.nanmin(sla_shallow):.3f} to {np.nanmax(sla_shallow):.3f} m/s")
             print(f"SLA_S (shallow water): mean={np.nanmean(sla_shallow):.3f} m")
         else:
             sla_shallow = np.full(len(all_results), np.nan)

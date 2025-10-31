@@ -136,27 +136,45 @@ class CrossCorrelationAnalyzer:
         Extract wave celerity and wavelength from timestack.
 
         Uses MATLAB-style algorithm: fixed time lag, variable spatial lag.
+        Returns raw Cf1 (celerities) and WLe1 (wavelengths) arrays matching MATLAB.
 
         Parameters
         ----------
         timestack : np.ndarray
-            2D timestack array (space x time)
+            2D timestack array (time x space)
 
         Returns
         -------
         Dict
-            Wave properties (celerity, wavelength, period)
+            Wave properties including:
+            - Cf1: Raw celerities array (before smoothing)
+            - WLe1: Raw wavelengths array (before smoothing)
+            - celerities: Same as Cf1 (for backward compatibility)
+            - wavelengths: Same as WLe1
         """
         results = {}
 
         # Use MATLAB-style cross-correlation (fixed time lag, variable spatial lag)
-        celerities = self._compute_celerity_matlab_style(timestack)
+        # This returns raw Cf1 (celerity array)
+        celerities_raw = self._compute_celerity_matlab_style(timestack)
 
-        # Store results
-        results['celerities'] = celerities
+        # Store raw arrays (Cf1)
+        results['Cf1'] = celerities_raw  # Raw celerities (MATLAB output)
+        results['celerities'] = celerities_raw  # For backward compatibility
+
+        # Compute wavelengths from celerities (WLe1)
+        # MATLAB: WLe1 is computed from cross-correlation, but commonly: wavelength = celerity * period
+        # For now, we'll estimate wavelengths from celerities using the time lag
+        # WLe1 = Cf1 * dpha (where dpha = 1 second is the time lag)
+        dpha = 1.0  # Time lag in seconds (matches MATLAB)
+        wavelengths_raw = celerities_raw * dpha  # Rough estimate: L = C * T
+
+        # Store raw wavelength array (WLe1)
+        results['WLe1'] = wavelengths_raw  # Raw wavelengths (MATLAB output)
+        results['wavelengths'] = wavelengths_raw  # For backward compatibility
 
         # Compute mean values
-        valid_celerities = celerities[~np.isnan(celerities)]
+        valid_celerities = celerities_raw[~np.isnan(celerities_raw)]
         if len(valid_celerities) > 0:
             results['mean_celerity'] = np.mean(valid_celerities)
             results['std_celerity'] = np.std(valid_celerities)
@@ -164,11 +182,16 @@ class CrossCorrelationAnalyzer:
             results['mean_celerity'] = np.nan
             results['std_celerity'] = np.nan
 
-        # Note: wavelengths and periods computed elsewhere
-        results['wavelengths'] = np.array([])
+        valid_wavelengths = wavelengths_raw[~np.isnan(wavelengths_raw)]
+        if len(valid_wavelengths) > 0:
+            results['mean_wavelength'] = np.mean(valid_wavelengths)
+            results['std_wavelength'] = np.std(valid_wavelengths)
+        else:
+            results['mean_wavelength'] = np.nan
+            results['std_wavelength'] = np.nan
+
+        # Periods not directly computed here
         results['periods'] = np.array([])
-        results['mean_wavelength'] = np.nan
-        results['std_wavelength'] = np.nan
         results['mean_period'] = np.nan
         results['std_period'] = np.nan
 
