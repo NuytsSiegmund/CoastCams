@@ -148,21 +148,31 @@ class WaveAnalyzer:
         # This is from the 1D time series, matching MATLAB line 159
         Hs_from_ts = 4.0 * np.std(filtered_ts)
 
-        # Compute periods using zero-crossing method on filtered signal
+        # Compute Tm (mean period) using zero-crossing method on filtered signal
         periods = self._compute_wave_periods_from_timeseries(filtered_ts)
 
         if len(periods) > 0:
-            mean_period = np.mean(periods)
-            print(f"  Wave period (zero-crossing): {mean_period:.2f}s from {len(periods)} cycles")
+            mean_period_Tm = np.mean(periods)
+            print(f"  Wave period Tm (zero-crossing): {mean_period_Tm:.2f}s from {len(periods)} cycles")
         else:
             # Fallback: estimate from FFT
-            mean_period = self._compute_peak_period(detrended_ts)
-            if np.isnan(mean_period):
-                mean_period = 10.0  # Default
-            print(f"  Wave period (fallback): {mean_period:.2f}s")
+            mean_period_Tm = self._compute_peak_period(detrended_ts)
+            if np.isnan(mean_period_Tm):
+                mean_period_Tm = 10.0  # Default
+            print(f"  Wave period Tm (fallback): {mean_period_Tm:.2f}s")
 
-        results['mean_Tm'] = mean_period
-        results['wave_periods'] = np.full(len(cross_shore_positions), mean_period)
+        # Compute Tp (peak period) using spectral analysis (FFT)
+        peak_period_Tp = self._compute_peak_period(filtered_ts)
+        if np.isnan(peak_period_Tp):
+            # If FFT fails, use Tm as fallback
+            peak_period_Tp = mean_period_Tm
+            print(f"  Wave period Tp (using Tm as fallback): {peak_period_Tp:.2f}s")
+        else:
+            print(f"  Wave period Tp (spectral peak): {peak_period_Tp:.2f}s")
+
+        results['mean_Tm'] = mean_period_Tm
+        results['mean_Tp'] = peak_period_Tp
+        results['wave_periods'] = np.full(len(cross_shore_positions), mean_period_Tm)
 
         # Step 4: Use full MATLAB photogrammetric pipeline
         # Detect breaking waves and compute heights
@@ -247,7 +257,8 @@ class WaveAnalyzer:
         results.setdefault('roller_length', np.nan)
         results.setdefault('break_location', np.nan)
         results.setdefault('break_depth', np.nan)
-        results.setdefault('mean_Tp', results['mean_Tm'])  # Use Tm as fallback for Tp
+        results.setdefault('mean_Tp', np.nan)  # Should be calculated separately from Tm
+        results.setdefault('mean_Tm', np.nan)
 
         results['cross_shore_positions'] = cross_shore_positions
 

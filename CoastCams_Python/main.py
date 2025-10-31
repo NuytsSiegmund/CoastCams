@@ -601,8 +601,12 @@ class CoastCamsWorkflow:
             print(f"  SLA_S (spatially averaged): {sla_shallow}")
             print(f"  SLA_S 1D range: {np.nanmin(sla_shallow):.3f} to {np.nanmax(sla_shallow):.3f} m/s")
             print(f"SLA_S (shallow water): mean={np.nanmean(sla_shallow):.3f} m")
+
+            # Store matrix for visualization
+            sla_shallow_matrix = SLA_S_matrix
         else:
             sla_shallow = np.full(len(all_results), np.nan)
+            sla_shallow_matrix = None
 
         # Build average timestack matrix (MATLAB line 281: Stack_av)
         # Extract average timestack profiles from all results
@@ -652,7 +656,7 @@ class CoastCamsWorkflow:
             # For MATLAB-style visualization
             'average_timestack': average_timestack,
             'sla_matrix': sla_matrix,
-            'sla_shallow_matrix': sla_shallow_matrix if 'sla_shallow_matrix' in locals() else None,
+            'sla_shallow_matrix': sla_shallow_matrix,
         }
 
     def _detect_shorelines(self):
