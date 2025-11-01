@@ -706,6 +706,8 @@ def main():
             wave_heights=np.array(Hs_TS),
             wave_periods=np.array(Tp_TS),
             water_levels=water_depth_values,
+            breakpoint_locations=np.array(BreakpointLocation),
+            shoreline_positions=np.array(ShorePosition),
             rotation=config.rotation_angle,
             filename='coastcams_matlab_summary.png'
         )

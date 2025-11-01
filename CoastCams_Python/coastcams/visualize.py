@@ -51,14 +51,16 @@ class CoastCamsVisualizer:
                                  wave_heights: np.ndarray,
                                  wave_periods: np.ndarray,
                                  water_levels: Optional[np.ndarray] = None,
+                                 breakpoint_locations: Optional[np.ndarray] = None,
+                                 shoreline_positions: Optional[np.ndarray] = None,
                                  rotation: int = 270,
                                  filename: str = 'coastcams_matlab_summary.png'):
         """
         Create MATLAB-style comprehensive summary plot.
 
         Matches plot_coastcams_main.m with 4 subplots:
-        1. Average Timestack (grayscale image)
-        2. Mean Sea Level (water depth) as 2D colormap
+        1. Average Timestack (grayscale image) with breakpoint and shoreline overlays
+        2. Sea Level Anomaly (SLA) as 2D colormap
         3. Significant Wave Height time series
         4. Peak Wave Period time series
 
@@ -69,13 +71,17 @@ class CoastCamsVisualizer:
         average_timestack : np.ndarray
             Average intensity profile for each timestack (num_images × spatial_pixels)
         sla_matrix : np.ndarray, optional
-            SLA matrix (num_images × spatial_pixels) - not used if water_levels provided
+            SLA matrix (num_images × spatial_pixels)
         wave_heights : np.ndarray
             Significant wave heights for each timestamp
         wave_periods : np.ndarray
             Peak wave periods for each timestamp
         water_levels : np.ndarray, optional
             Mean sea level / water depth per timestamp (1D array)
+        breakpoint_locations : np.ndarray, optional
+            Breakpoint locations for each timestamp (in pixels)
+        shoreline_positions : np.ndarray, optional
+            Shoreline positions for each timestamp (in pixels)
         rotation : int
             Rotation angle (default: 270)
         filename : str
@@ -104,6 +110,25 @@ class CoastCamsVisualizer:
         im1 = ax1.imshow(rotated_stack.T, aspect='auto', cmap='gray',
                         extent=[time_nums[0], time_nums[-1], 0, rotated_stack.shape[1]],
                         origin='lower')
+
+        # Overlay breakpoint locations and shoreline positions
+        if breakpoint_locations is not None and len(breakpoint_locations) > 0:
+            valid_bp = ~np.isnan(breakpoint_locations)
+            if np.any(valid_bp):
+                ax1.plot(np.array(time_nums)[valid_bp], breakpoint_locations[valid_bp],
+                        'r.', markersize=8, label='Breakpoint Location', alpha=0.8)
+
+        if shoreline_positions is not None and len(shoreline_positions) > 0:
+            valid_sl = ~np.isnan(shoreline_positions)
+            if np.any(valid_sl):
+                ax1.plot(np.array(time_nums)[valid_sl], shoreline_positions[valid_sl],
+                        'c.', markersize=8, label='Shoreline Position', alpha=0.8)
+
+        # Add legend if overlays were plotted
+        if ((breakpoint_locations is not None and np.any(~np.isnan(breakpoint_locations))) or
+            (shoreline_positions is not None and np.any(~np.isnan(shoreline_positions)))):
+            ax1.legend(loc='upper right', fontsize=10, framealpha=0.7)
+
         ax1.set_title('Average Timestack', fontsize=14, fontweight='bold')
         ax1.set_ylabel('Cross-shore distance [pixels]', fontsize=12)
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
