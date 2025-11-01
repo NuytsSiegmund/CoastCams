@@ -215,11 +215,7 @@ def main():
         threshold=config.shoreline_threshold
     )
 
-    preprocessor = ImagePreprocessor(
-        icmin=config.min_cross_shore,
-        icmax=config.max_cross_shore,
-        dt=dt
-    )
+    preprocessor = ImagePreprocessor(config=config)
 
     wave_analyzer = WaveAnalyzer(
         dt=dt,
@@ -291,10 +287,19 @@ def main():
         # G4-G5: Preprocessing (MATLAB line 169-184)
         print("[3/7] Preprocessing timestack...")
         try:
-            preprocessed = preprocessor.preprocess(timestack)
+            # Convert to grayscale if needed and preprocess
+            if len(timestack.shape) == 3:
+                # Use blue channel (MATLAB line 175: S0(:,:,3))
+                timestack_gray = timestack[:, :, 2].astype(np.float64)
+            else:
+                timestack_gray = timestack.astype(np.float64)
+
+            preprocessed = preprocessor.preprocess_image(timestack_gray)
             print(f"  Preprocessed timestack shape: {preprocessed.shape}")
         except Exception as e:
             print(f"  Error in preprocessing: {e}")
+            import traceback
+            traceback.print_exc()
             _append_nan_results(i, WaveCelerity, WaveLength, Hs_TS, Tp_TS, Tm_TS,
                                WaveEnergy, RollerLength, BreakpointDepth,
                                BreakpointLocation, WaterDepth, WaterDepth_L,
