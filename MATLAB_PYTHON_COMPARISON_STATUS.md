@@ -1,5 +1,19 @@
 # MATLAB-Python Comparison Status Update
 
+## Current Status (Post-Rewrite)
+
+After a complete rewrite of main.py to match S01_AnalysisTimestackImages.m workflow, the empty CSV columns issue persists. A diagnostic investigation has been initiated to track down the root cause.
+
+**Latest Changes (Commit 4e332c3):**
+- ✅ Added missing `/10` division to Cf1 (matches MATLAB line 242)
+- ✅ Added comprehensive debug output to track correlation results
+- ✅ Added matrix building statistics output
+- ✅ Created DIAGNOSIS_EMPTY_COLUMNS.md with root cause analysis
+
+**Next Step:** Run analysis with debug output to identify where NaN values originate in the processing chain.
+
+---
+
 ## Issues Reported and Status
 
 ### ✅ 1. Camera Angle Issue - **RESOLVED**
@@ -60,36 +74,49 @@ im = ax.imshow(timestack_display, aspect='auto', cmap='viridis', origin='lower')
 
 ---
 
-### ⚠️ 4. Empty CSV Columns - **LIKELY RESOLVED (Needs Verification)**
+### 🔍 4. Empty CSV Columns - **UNDER ACTIVE INVESTIGATION**
 **Report**: "A lot of variables are still missing" - WaterDepth, SLA_S, SLA_L, Bathymetry empty
 
-**Status**: Code appears correct, likely user was viewing OLD CSV file
+**Status**: Issue persists even after complete rewrite. Root cause analysis in progress.
 
-**Evidence from test run**:
+**User Feedback After Rewrite**:
 ```
-WaterDepth_L array: 689 spatial points
-  Valid depths: 590/689
-  Depth range: [0.00, 2.54] m
-  Mean water depth: 1.10 m
+"The results seems worse"
+- WaterDepth: EMPTY
+- SLA_L: EMPTY
+- SLA_S: EMPTY
+- BreakpointDepth: EMPTY
+- Rows 13-14: Absurd wave heights (191m, 199m)
 ```
 
-**What's working**:
-- Water depths ARE being calculated from linear wave theory
-- SLA calculations are implemented (lines 506-540 in main.py)
-- CSV export keys are correct: 'depths', 'sla_values', 'sla_shallow_values'
+**Root Cause Hypothesis**:
+The cross-correlation step may not be producing valid Cf1/WLe1 arrays. If Cf1 is empty or all-NaN, it cascades through the entire pipeline:
+```
+Cf1 (from correlation) → WaveCelerity matrix → WaterDepth_L → SLA_L → Bathymetry
+```
 
-**Added debug output**:
+**Key Issues Identified**:
+1. **Missing /10 division** - MATLAB line 242: `Cf1./10` was not implemented (NOW FIXED)
+2. **Unknown correlation output** - Need to verify CrossCorrelationAnalyzer produces valid arrays
+3. **Timestack format** - May not match what correlation expects
+4. **Matrix building** - Need to verify non-NaN values make it to final matrices
+
+**Debug Output Added (Commit 4e332c3)**:
 ```python
-print(f"\n=== Depth Profile Collection ===")
-print(f"Collected {len(depth_profiles_list)} depth profiles from {len(all_results)} timestacks")
+# Track correlation results:
+print(f"DEBUG: Cf1 shape: {shape}")
+print(f"DEBUG: Cf1 non-NaN values: {count}")
+print(f"DEBUG: Cf1 range: [{min}, {max}]")
 
-print(f"\n=== Results Summary ===")
-print(f"water_depths_array: shape, Non-NaN count")
-print(f"slas (SLA_L): shape, Non-NaN count")
-print(f"sla_shallow (SLA_S): shape, Non-NaN count")
+# Track matrix building:
+print(f"WaveCelerity matrix: {shape}")
+print(f"  Non-NaN values: {count}/{total}")
+print(f"  Value range: [{min}, {max}]")
 ```
 
-**Action**: User should run fresh analysis and check CSV timestamp matches.
+**Next Action**: Run with debug output to identify exact point where NaN values originate.
+
+**Documentation**: See DIAGNOSIS_EMPTY_COLUMNS.md for detailed analysis.
 
 ---
 
@@ -149,9 +176,21 @@ break_location = cross_shore_positions[median_break_pos]
 
 ## Commits Made
 
+### Session 1 (Initial Fixes):
 1. **4694801**: REVERT: Camera angle should vary per wave based on distance
 2. **b02b457**: Add investigation doc for empty CSV columns
 3. **8329714**: Fix timestack plotting orientation and add debug output
+
+### Session 2 (Complete Rewrite):
+4. **c3488a7**: Complete rewrite of main.py to match MATLAB workflow
+5. **9b6bf9c**: Fix import names (ImageLoader, ImagePreprocessor, etc.)
+6. **47fdc6a**: Fix config initialization and attribute names
+7. **426c1a6**: Fix output directory path resolution and permission handling
+8. **f9168f8**: Fix ImageLoader API usage (image_files, load_image, discover_images)
+9. **9902bed**: Fix ImagePreprocessor initialization (config object, preprocess_image)
+10. **95c285a**: Fix all analyzer initializations to use config objects
+11. **b7fa07d**: Fix CrossCorrelationAnalyzer method call (analyze_timestack)
+12. **4e332c3**: Add critical /10 division and comprehensive debug output
 
 All changes pushed to: `claude/coastcams-matlab-python-comparison-updated-011CUcJqCvFZyQHBBfJ5fZGU`
 
