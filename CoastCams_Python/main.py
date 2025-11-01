@@ -20,11 +20,11 @@ import warnings
 
 # Import CoastCams modules
 from coastcams.config import CoastCamsConfig
-from coastcams.image_loader import CoastCamsImageLoader
+from coastcams.image_loader import ImageLoader
 from coastcams.shoreline import ShorelineDetector
-from coastcams.preprocessing import CoastCamsPreprocessor
+from coastcams.preprocessing import ImagePreprocessor
 from coastcams.wave_analysis import WaveAnalyzer
-from coastcams.correlation import CrossCorrelationAnalyzer
+from coastcams.cross_correlation import CrossCorrelationAnalyzer
 from coastcams.bathymetry import BathymetryEstimator
 from coastcams.visualize import CoastCamsVisualizer
 from coastcams.matlab_preprocessing import MATLABPreprocessor
@@ -174,7 +174,7 @@ def main():
     # =====================================================================
 
     print("[1/7] Loading timestack images...")
-    loader = CoastCamsImageLoader(str(img_path))
+    loader = ImageLoader(str(img_path))
 
     if len(loader.image_paths) == 0:
         print(f"Error: No images found in {img_path}")
@@ -188,7 +188,7 @@ def main():
         threshold=config.threshold
     )
 
-    preprocessor = CoastCamsPreprocessor(
+    preprocessor = ImagePreprocessor(
         icmin=config.icmin,
         icmax=config.icmax,
         dt=config.dt
