@@ -320,12 +320,6 @@ def main():
             break_location = wave_results.get('break_location', np.nan)
             break_depth = wave_results.get('break_depth', np.nan)
 
-            # Sanity check for wave height (should be < 20m for coastal waves)
-            if not np.isnan(hs) and hs > 20.0:
-                print(f"  WARNING: Absurd wave height {hs:.1f}m detected, setting to NaN")
-                print(f"           This indicates a problem in WaveAnalyzer for this timestack")
-                hs = np.nan
-
             # depth_s from photogrammetry (MATLAB line 210, 218)
             depth_s = wave_results.get('depth_profile', None)
 

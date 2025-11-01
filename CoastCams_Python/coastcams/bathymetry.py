@@ -36,6 +36,45 @@ class BathymetryEstimator:
             self.gravity = 9.81  # m/s^2
             self.pixel_resolution = 0.1  # meters/pixel
 
+    def estimate_depth_linear_wave_theory(self, peak_period: float,
+                                          celerities: np.ndarray,
+                                          precision: float = 0.01) -> np.ndarray:
+        """
+        Calculate depth array from wave period and celerity array.
+
+        This is the Python equivalent of MATLAB's LinearC function.
+        Matches S01_AnalysisTimestackImages.m line 247:
+        [df] = LinearC(Tp, WaveCelerity(i,:), 0.01);
+
+        Parameters
+        ----------
+        peak_period : float
+            Wave period (Tp) in seconds
+        celerities : np.ndarray
+            Array of wave celerities in m/s
+        precision : float, optional
+            Convergence precision (default: 0.01)
+
+        Returns
+        -------
+        np.ndarray
+            Array of depths corresponding to each celerity
+        """
+        depths = np.zeros_like(celerities)
+
+        for i in range(len(celerities)):
+            if not np.isnan(celerities[i]) and celerities[i] > 0:
+                depths[i] = calculate_depth_from_celerity(
+                    celerities[i],
+                    peak_period,
+                    self.gravity,
+                    precision
+                )
+            else:
+                depths[i] = np.nan
+
+        return depths
+
     def estimate_depth_from_waves(self, wave_period: float,
                                   wave_celerity: float,
                                   method: str = 'linear') -> float:
