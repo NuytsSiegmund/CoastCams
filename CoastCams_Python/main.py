@@ -73,7 +73,10 @@ def smooth2(data: np.ndarray, Nr: int, Nc: int) -> np.ndarray:
 
 def movmean(data: np.ndarray, window: int) -> np.ndarray:
     """
-    Moving average matching MATLAB's movmean.
+    Moving average matching MATLAB's movmean with NaN handling.
+
+    Uses pandas rolling mean which properly handles NaN values by
+    computing the mean of available (non-NaN) values in each window.
 
     Parameters
     ----------
@@ -87,16 +90,20 @@ def movmean(data: np.ndarray, window: int) -> np.ndarray:
     np.ndarray
         Smoothed array
     """
-    from scipy.ndimage import uniform_filter1d
+    import pandas as pd
 
     if data.ndim == 1:
-        return uniform_filter1d(data, size=window, mode='nearest')
+        # Use pandas rolling mean which handles NaN properly
+        series = pd.Series(data)
+        result = series.rolling(window=window, center=True, min_periods=1).mean()
+        return result.values
     else:
         # Apply along last dimension
         result = np.zeros_like(data)
         if data.ndim == 2:
             for i in range(data.shape[0]):
-                result[i, :] = uniform_filter1d(data[i, :], size=window, mode='nearest')
+                series = pd.Series(data[i, :])
+                result[i, :] = series.rolling(window=window, center=True, min_periods=1).mean().values
         return result
 
 
@@ -364,12 +371,17 @@ def main():
             if len(Cf1) > 0:
                 # Apply movmean smoothing (MATLAB line 242-243)
                 # CRITICAL: MATLAB divides by 10 (line 242: Cf1./10)
-                Cf1_smoothed = movmean(Cf1 / 10.0, 10)  # Add /10 division!
+                Cf1_divided = Cf1 / 10.0
+                print(f"  DEBUG: After /10 division: {np.sum(~np.isnan(Cf1_divided))}/{len(Cf1_divided)} non-NaN values")
+
+                Cf1_smoothed = movmean(Cf1_divided, 10)  # NaN-aware smoothing
                 WLe1_smoothed = movmean(WLe1, 10)
+
+                print(f"  DEBUG: After smoothing: {np.sum(~np.isnan(Cf1_smoothed))}/{len(Cf1_smoothed)} non-NaN values")
+                print(f"  DEBUG: Smoothed range: [{np.nanmin(Cf1_smoothed):.3f}, {np.nanmax(Cf1_smoothed):.3f}]")
 
                 WaveCelerity.append(Cf1_smoothed)
                 WaveLength.append(WLe1_smoothed)
-                print(f"  DEBUG: Stored celerity array with {np.sum(~np.isnan(Cf1_smoothed))} non-NaN values")
             else:
                 WaveCelerity.append(np.full(config.max_cross_shore - dc, np.nan))
                 WaveLength.append(np.full(config.max_cross_shore - dc, np.nan))
