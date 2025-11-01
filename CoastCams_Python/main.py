@@ -348,11 +348,12 @@ def main():
         # G7: Cross-correlation calculations (MATLAB line 234)
         print("[5/7] Performing cross-correlation...")
         try:
-            corr_results = correlation_analyzer.analyze(preprocessed)
+            corr_results = correlation_analyzer.analyze_timestack(preprocessed)
 
             # Extract celerity and wavelength (MATLAB line 234)
-            Cf1 = corr_results.get('celerity_array', np.array([]))
-            WLe1 = corr_results.get('wavelength_array', np.array([]))
+            # Keys are 'Cf1' and 'WLe1' (raw MATLAB outputs)
+            Cf1 = corr_results.get('Cf1', np.array([]))
+            WLe1 = corr_results.get('WLe1', np.array([]))
 
             if len(Cf1) > 0:
                 # Apply movmean smoothing (MATLAB line 242-243)
@@ -368,6 +369,8 @@ def main():
 
         except Exception as e:
             print(f"  Error in cross-correlation: {e}")
+            import traceback
+            traceback.print_exc()
             WaveCelerity.append(np.full(config.max_cross_shore - dc, np.nan))
             WaveLength.append(np.full(config.max_cross_shore - dc, np.nan))
 
