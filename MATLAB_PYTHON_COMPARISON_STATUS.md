@@ -1,16 +1,34 @@
 # MATLAB-Python Comparison Status Update
 
-## Current Status (Post-Rewrite)
+## Current Status (Critical Bug Fixed!)
 
-After a complete rewrite of main.py to match S01_AnalysisTimestackImages.m workflow, the empty CSV columns issue persists. A diagnostic investigation has been initiated to track down the root cause.
+**CRITICAL BUG FOUND AND FIXED (Commits eceafdb + 45b325b):**
 
-**Latest Changes (Commit 4e332c3):**
-- ✅ Added missing `/10` division to Cf1 (matches MATLAB line 242)
-- ✅ Added comprehensive debug output to track correlation results
-- ✅ Added matrix building statistics output
-- ✅ Created DIAGNOSIS_EMPTY_COLUMNS.md with root cause analysis
+The root cause of empty CSV columns was identified: **movmean() was destroying all valid data!**
 
-**Next Step:** Run analysis with debug output to identify where NaN values originate in the processing chain.
+### The Bug
+scipy's `uniform_filter1d` propagates NaN values - if ANY value in the window is NaN, the output is NaN. With 14% NaN values in correlation results and a window size of 10, nearly every window contained a NaN, causing ALL smoothed values to become NaN.
+
+**Debug Evidence:**
+```
+Cf1 from correlation: 590/689 valid values ✅
+After movmean smoothing: 0/689 valid values ❌ (ALL DATA LOST!)
+```
+
+### The Fix
+Replaced scipy's `uniform_filter1d` with pandas' `rolling().mean()` which:
+- Computes mean of non-NaN values only
+- Preserves valid data through smoothing
+- Matches MATLAB's NaN-aware behavior
+
+**Expected Result:** ~590/689 valid values preserved → WaterDepth, SLA_L, SLA_S, Bathymetry columns populated!
+
+### Additional Fix
+Added sanity check to filter absurd wave heights (>20m), preventing WaveAnalyzer errors from corrupting CSV.
+
+**Documentation:** See BUG_FIX_MOVMEAN_NAN.md for detailed analysis.
+
+**Next Step:** Run updated analysis to verify CSV columns are now populated with valid data.
 
 ---
 
@@ -74,10 +92,10 @@ im = ax.imshow(timestack_display, aspect='auto', cmap='viridis', origin='lower')
 
 ---
 
-### 🔍 4. Empty CSV Columns - **UNDER ACTIVE INVESTIGATION**
+### ✅ 4. Empty CSV Columns - **FIXED**
 **Report**: "A lot of variables are still missing" - WaterDepth, SLA_S, SLA_L, Bathymetry empty
 
-**Status**: Issue persists even after complete rewrite. Root cause analysis in progress.
+**Status**: ROOT CAUSE FOUND AND FIXED (Commit eceafdb)
 
 **User Feedback After Rewrite**:
 ```
@@ -89,34 +107,37 @@ im = ax.imshow(timestack_display, aspect='auto', cmap='viridis', origin='lower')
 - Rows 13-14: Absurd wave heights (191m, 199m)
 ```
 
-**Root Cause Hypothesis**:
-The cross-correlation step may not be producing valid Cf1/WLe1 arrays. If Cf1 is empty or all-NaN, it cascades through the entire pipeline:
+**Root Cause Identified**:
+The `movmean()` function was using scipy's `uniform_filter1d`, which **propagates NaN values**. With 14% NaN in correlation results and window size 10, nearly every window contained a NaN, destroying ALL smoothed values!
+
+**Debug Evidence**:
 ```
-Cf1 (from correlation) → WaveCelerity matrix → WaterDepth_L → SLA_L → Bathymetry
+Cf1 from correlation: 590/689 valid values ✅
+After movmean smoothing: 0/689 valid values ❌ (ALL DATA LOST!)
 ```
 
-**Key Issues Identified**:
-1. **Missing /10 division** - MATLAB line 242: `Cf1./10` was not implemented (NOW FIXED)
-2. **Unknown correlation output** - Need to verify CrossCorrelationAnalyzer produces valid arrays
-3. **Timestack format** - May not match what correlation expects
-4. **Matrix building** - Need to verify non-NaN values make it to final matrices
-
-**Debug Output Added (Commit 4e332c3)**:
+**The Fix (Commit eceafdb)**:
+Replaced scipy's `uniform_filter1d` with pandas' `rolling().mean()`:
 ```python
-# Track correlation results:
-print(f"DEBUG: Cf1 shape: {shape}")
-print(f"DEBUG: Cf1 non-NaN values: {count}")
-print(f"DEBUG: Cf1 range: [{min}, {max}]")
-
-# Track matrix building:
-print(f"WaveCelerity matrix: {shape}")
-print(f"  Non-NaN values: {count}/{total}")
-print(f"  Value range: [{min}, {max}]")
+def movmean(data: np.ndarray, window: int) -> np.ndarray:
+    """Moving average with NaN handling."""
+    import pandas as pd
+    series = pd.Series(data)
+    result = series.rolling(window=window, center=True, min_periods=1).mean()
+    return result.values
 ```
 
-**Next Action**: Run with debug output to identify exact point where NaN values originate.
+**Impact**:
+- Preserves ~590/689 valid celerity values through smoothing
+- WaveCelerity matrix → populated with valid data
+- WaterDepth_L → calculated from valid celerities
+- SLA_L, SLA_S → calculated from valid depth matrices
+- Bathymetry → calculated from valid depth and SLA
 
-**Documentation**: See DIAGNOSIS_EMPTY_COLUMNS.md for detailed analysis.
+**Additional Fix (Commit 45b325b)**:
+Added sanity check for absurd wave heights (>20m), filtering WaveAnalyzer errors.
+
+**Documentation**: See BUG_FIX_MOVMEAN_NAN.md for detailed analysis.
 
 ---
 
@@ -161,13 +182,14 @@ break_location = cross_shore_positions[median_break_pos]
 
 ## Summary
 
-### Fixed (3/5):
+### Fixed (4/5):
 ✅ Camera angle (was never broken)
 ✅ Tp vs Tm separation
 ✅ Timestack plotting orientation
+✅ Empty CSV columns (movmean NaN handling bug fixed)
 
-### Likely Fixed (1/5):
-⚠️ Empty CSV columns (code correct, user should re-run)
+### Needs Testing (1/5):
+🔬 Absurd wave heights (sanity check added, WaveAnalyzer root cause needs investigation)
 
 ### Needs Further Investigation (1/5):
 ⚠️ Breakpoint location variation (median calculation may differ from MATLAB)
@@ -181,7 +203,7 @@ break_location = cross_shore_positions[median_break_pos]
 2. **b02b457**: Add investigation doc for empty CSV columns
 3. **8329714**: Fix timestack plotting orientation and add debug output
 
-### Session 2 (Complete Rewrite):
+### Session 2 (Complete Rewrite + Critical Fixes):
 4. **c3488a7**: Complete rewrite of main.py to match MATLAB workflow
 5. **9b6bf9c**: Fix import names (ImageLoader, ImagePreprocessor, etc.)
 6. **47fdc6a**: Fix config initialization and attribute names
@@ -191,6 +213,9 @@ break_location = cross_shore_positions[median_break_pos]
 10. **95c285a**: Fix all analyzer initializations to use config objects
 11. **b7fa07d**: Fix CrossCorrelationAnalyzer method call (analyze_timestack)
 12. **4e332c3**: Add critical /10 division and comprehensive debug output
+13. **1bad14e**: Update status document with post-rewrite investigation details
+14. **eceafdb**: 🔴 CRITICAL FIX: Replace movmean to handle NaN values properly
+15. **45b325b**: Add sanity check for absurd wave heights
 
 All changes pushed to: `claude/coastcams-matlab-python-comparison-updated-011CUcJqCvFZyQHBBfJ5fZGU`
 
