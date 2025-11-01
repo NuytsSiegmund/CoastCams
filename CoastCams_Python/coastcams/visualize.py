@@ -123,24 +123,31 @@ class CoastCamsVisualizer:
                         extent=[time_nums[0], time_nums[-1], 0, rotated_stack.shape[0]],
                         origin='lower')
 
+        # Create secondary y-axis for distance in meters
+        # Assume pixel_resolution = 0.1 m/pixel (standard for CoastCams)
+        pixel_resolution = 0.1  # m/pixel
+        ax1_right = ax1.twinx()
+        ax1_right.set_ylim(0, rotated_stack.shape[0] * pixel_resolution)
+        ax1_right.set_ylabel('Cross-shore distance [m]', fontsize=12)
+
         # Overlay breakpoint locations and shoreline positions
-        # These are pixel positions (y-axis) vs time (x-axis)
+        # These are in METERS, so plot on the right y-axis
         if breakpoint_locations is not None and len(breakpoint_locations) > 0:
             valid_bp = ~np.isnan(breakpoint_locations)
             if np.any(valid_bp):
-                ax1.plot(np.array(time_nums)[valid_bp], breakpoint_locations[valid_bp],
+                ax1_right.plot(np.array(time_nums)[valid_bp], breakpoint_locations[valid_bp],
                         'r.', markersize=8, label='Breakpoint Location', alpha=0.8)
 
         if shoreline_positions is not None and len(shoreline_positions) > 0:
             valid_sl = ~np.isnan(shoreline_positions)
             if np.any(valid_sl):
-                ax1.plot(np.array(time_nums)[valid_sl], shoreline_positions[valid_sl],
+                ax1_right.plot(np.array(time_nums)[valid_sl], shoreline_positions[valid_sl],
                         'c.', markersize=8, label='Shoreline Position', alpha=0.8)
 
-        # Add legend if overlays were plotted
+        # Add legend if overlays were plotted (on right axis)
         if ((breakpoint_locations is not None and np.any(~np.isnan(breakpoint_locations))) or
             (shoreline_positions is not None and np.any(~np.isnan(shoreline_positions)))):
-            ax1.legend(loc='upper right', fontsize=10, framealpha=0.7)
+            ax1_right.legend(loc='upper right', fontsize=10, framealpha=0.7)
 
         ax1.set_title('Average Timestack', fontsize=14, fontweight='bold')
         ax1.set_ylabel('Cross-shore distance [pixels]', fontsize=12)
