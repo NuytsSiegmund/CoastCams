@@ -540,10 +540,22 @@ def main():
     print("\nCalculating Relative Tidal Range (RTR)...")
 
     try:
-        Level_TS = np.nanmean(WaveCelerity, axis=1)  # Average water level per timestack
+        Level_TS = np.nanmean(WaveCelerity, axis=1)  # Average celerity per timestack (proxy for water level)
         nRTR_thresh = Level_TS - np.nanmin(Level_TS)
-        nRTR_thresh[nRTR_thresh < 0.2] = np.nan  # Threshold to avoid divide by zero
-        RTR = np.array(Hs_TS) / nRTR_thresh
+
+        # Debug output to understand threshold behavior
+        print(f"  Level_TS range: [{np.nanmin(Level_TS):.3f}, {np.nanmax(Level_TS):.3f}]")
+        print(f"  nRTR_thresh range: [{np.nanmin(nRTR_thresh):.3f}, {np.nanmax(nRTR_thresh):.3f}]")
+        n_below_thresh = np.sum(nRTR_thresh < 0.2)
+        print(f"  Values below 0.2 threshold: {n_below_thresh}/{len(nRTR_thresh)}")
+
+        # Apply minimum threshold to prevent division by very small numbers
+        # Instead of setting to NaN, clamp to minimum value
+        nRTR_thresh_safe = np.maximum(nRTR_thresh, 0.2)
+        RTR = np.array(Hs_TS) / nRTR_thresh_safe
+
+        # Set RTR to NaN where Hs is NaN (no valid wave height)
+        RTR[np.isnan(Hs_TS)] = np.nan
 
         print(f"  RTR: mean={np.nanmean(RTR):.3f}, range=[{np.nanmin(RTR):.3f}, {np.nanmax(RTR):.3f}]")
     except Exception as e:
