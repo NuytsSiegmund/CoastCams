@@ -103,15 +103,28 @@ class CoastCamsVisualizer:
         time_nums = mdates.date2num(timestamps)
 
         # Subplot 1: Average Timestack
-        # Rotate the average timestack
-        from scipy.ndimage import rotate
-        rotated_stack = rotate(average_timestack, rotation, reshape=True, order=1)
+        # Stack_av shape: (num_timestacks, num_spatial_positions) e.g., (16, 689)
+        # For plotting with TIME on x-axis and SPACE on y-axis, we need to transpose
+        # so that imshow interprets: rows=space (y-axis), columns=time (x-axis)
 
-        im1 = ax1.imshow(rotated_stack.T, aspect='auto', cmap='gray',
-                        extent=[time_nums[0], time_nums[-1], 0, rotated_stack.shape[1]],
+        # Transpose BEFORE rotation: (time, space) → (space, time)
+        stack_for_display = average_timestack.T  # Now (689, 16)
+
+        # Apply rotation if needed
+        from scipy.ndimage import rotate
+        if rotation != 0:
+            rotated_stack = rotate(stack_for_display, rotation, reshape=True, order=1)
+        else:
+            rotated_stack = stack_for_display
+
+        # Display with imshow
+        # extent=[left, right, bottom, top] = [time_start, time_end, 0, num_pixels]
+        im1 = ax1.imshow(rotated_stack, aspect='auto', cmap='gray',
+                        extent=[time_nums[0], time_nums[-1], 0, rotated_stack.shape[0]],
                         origin='lower')
 
         # Overlay breakpoint locations and shoreline positions
+        # These are pixel positions (y-axis) vs time (x-axis)
         if breakpoint_locations is not None and len(breakpoint_locations) > 0:
             valid_bp = ~np.isnan(breakpoint_locations)
             if np.any(valid_bp):
