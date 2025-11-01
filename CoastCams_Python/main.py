@@ -35,7 +35,9 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 def smooth2(data: np.ndarray, Nr: int, Nc: int) -> np.ndarray:
     """
-    2D smoothing function matching MATLAB's smooth2.
+    2D smoothing function matching MATLAB's smooth2 with NaN handling.
+
+    Uses pandas rolling mean (like movmean) to properly handle NaN values.
 
     Parameters
     ----------
@@ -51,22 +53,24 @@ def smooth2(data: np.ndarray, Nr: int, Nc: int) -> np.ndarray:
     np.ndarray
         Smoothed 2D array
     """
-    from scipy.ndimage import uniform_filter1d
+    import pandas as pd
 
     if data.ndim != 2:
         raise ValueError("Input must be 2D array")
 
     result = np.copy(data)
 
-    # Column-wise smoothing (spatial dimension)
+    # Column-wise smoothing (spatial dimension) - NaN-aware
     if Nc > 0:
         for i in range(result.shape[0]):
-            result[i, :] = uniform_filter1d(result[i, :], size=Nc, mode='nearest')
+            series = pd.Series(result[i, :])
+            result[i, :] = series.rolling(window=Nc, center=True, min_periods=1).mean().values
 
-    # Row-wise smoothing (time dimension) - minimal with Nr=1
+    # Row-wise smoothing (time dimension) - minimal with Nr=1, NaN-aware
     if Nr > 1:
         for j in range(result.shape[1]):
-            result[:, j] = uniform_filter1d(result[:, j], size=Nr, mode='nearest')
+            series = pd.Series(result[:, j])
+            result[:, j] = series.rolling(window=Nr, center=True, min_periods=1).mean().values
 
     return result
 
