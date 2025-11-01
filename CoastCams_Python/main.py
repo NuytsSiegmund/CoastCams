@@ -115,11 +115,11 @@ def main():
 
     # Load configuration
     config_path = Path(__file__).parent / 'config.yaml'
-    if not config_path.exists():
-        print(f"Error: Configuration file not found at {config_path}")
-        return
-
-    config = CoastCamsConfig.from_yaml(str(config_path))
+    if config_path.exists():
+        config = CoastCamsConfig(str(config_path))
+    else:
+        print(f"Configuration file not found at {config_path}, using defaults")
+        config = CoastCamsConfig()
 
     # Set up paths
     repo_path = Path(__file__).parent.parent
@@ -127,26 +127,34 @@ def main():
     out_path = Path(config.output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
+    # Calculate dt from acquisition frequency
+    dt = 1.0 / config.acquisition_frequency
+
+    # Set icmax if not specified
+    if config.max_cross_shore is None:
+        config.max_cross_shore = 680  # Default from MATLAB
+
     print("\n" + "="*60)
     print("CoastCams Configuration Summary")
     print("="*60 + "\n")
     print(f"Camera Parameters:")
     print(f"  Height above MSL: {config.camera_height:.3f} m")
     print(f"  Pixel resolution: {config.pixel_resolution:.3f} m/pixel")
-    print(f"  Rotation angle: {config.rotation}°")
+    print(f"  Rotation angle: {config.rotation_angle}°")
     print(f"  Acquisition frequency: {config.acquisition_frequency} Hz")
     print(f"\nWave Analysis:")
-    print(f"  Period range: {config.period_min}-{config.period_max} s")
-    print(f"  Correlation spacing: {config.dc} pixels")
-    print(f"  Cross-shore width: {config.nlim} pixels")
+    print(f"  Period range: {config.wave_period_min}-{config.wave_period_max} s")
+    print(f"  Correlation spacing: {config.correlation_spacing} pixels")
+    print(f"  Cross-shore width: {config.cross_shore_width} pixels")
     print(f"\nShoreline Detection:")
     print(f"  Method: {config.shoreline_method}")
-    print(f"  Threshold: {config.threshold}")
+    print(f"  Threshold: {config.shoreline_threshold}")
     print(f"\nOutput Settings:")
     print(f"  Input directory: {img_path}")
     print(f"  Output directory: {out_path}")
     print(f"  Output interval: {config.output_interval} minutes")
     print(f"  Output format: {config.output_format}")
+    print(f"  Save plots: {config.save_plots}")
     print("="*60 + "\n")
 
     # =====================================================================
@@ -185,34 +193,34 @@ def main():
     # Initialize analyzers
     shoreline_detector = ShorelineDetector(
         method=config.shoreline_method,
-        threshold=config.threshold
+        threshold=config.shoreline_threshold
     )
 
     preprocessor = ImagePreprocessor(
-        icmin=config.icmin,
-        icmax=config.icmax,
-        dt=config.dt
+        icmin=config.min_cross_shore,
+        icmax=config.max_cross_shore,
+        dt=dt
     )
 
     wave_analyzer = WaveAnalyzer(
-        dt=config.dt,
-        period_range=(config.period_min, config.period_max)
+        dt=dt,
+        period_range=(config.wave_period_min, config.wave_period_max)
     )
 
     correlation_analyzer = CrossCorrelationAnalyzer(
-        dpha=config.dpha,
-        dt=config.dt,
-        dc=config.dc
+        dpha=config.time_lag,
+        dt=dt,
+        dc=config.correlation_spacing
     )
 
     matlab_preprocessor = MATLABPreprocessor(
         camera_height=config.camera_height,
         pixel_resolution=config.pixel_resolution,
-        dt=config.dt
+        dt=dt
     )
 
     bathymetry_estimator = BathymetryEstimator(
-        peak_period=config.period_max,  # Will be updated per timestack
+        peak_period=config.wave_period_max,  # Will be updated per timestack
         pixel_resolution=config.pixel_resolution
     )
 
@@ -228,7 +236,7 @@ def main():
     # D: Process Each Timestack (MATLAB line 108-300)
     # =====================================================================
 
-    dc = config.dc
+    dc = config.correlation_spacing
 
     for i, (timestamp, image_path) in enumerate(zip(loader.timestamps, loader.image_paths)):
         print("="*70)
@@ -322,7 +330,7 @@ def main():
             WaterDepth.append(depth_s_smoothed)
         else:
             # Store NaN array of appropriate size
-            WaterDepth.append(np.full(config.icmax - dc, np.nan))
+            WaterDepth.append(np.full(config.max_cross_shore - dc, np.nan))
 
         # G7: Cross-correlation calculations (MATLAB line 234)
         print("[5/7] Performing cross-correlation...")
@@ -342,13 +350,13 @@ def main():
                 WaveCelerity.append(Cf1_smoothed)
                 WaveLength.append(WLe1_smoothed)
             else:
-                WaveCelerity.append(np.full(config.icmax - dc, np.nan))
-                WaveLength.append(np.full(config.icmax - dc, np.nan))
+                WaveCelerity.append(np.full(config.max_cross_shore - dc, np.nan))
+                WaveLength.append(np.full(config.max_cross_shore - dc, np.nan))
 
         except Exception as e:
             print(f"  Error in cross-correlation: {e}")
-            WaveCelerity.append(np.full(config.icmax - dc, np.nan))
-            WaveLength.append(np.full(config.icmax - dc, np.nan))
+            WaveCelerity.append(np.full(config.max_cross_shore - dc, np.nan))
+            WaveLength.append(np.full(config.max_cross_shore - dc, np.nan))
 
         # G8: Calculate depth using linear wave theory (MATLAB line 247)
         print("[6/7] Calculating water depth from linear wave theory...")
@@ -367,10 +375,10 @@ def main():
                 depths_linear_smoothed = movmean(depths_linear, 10)
                 WaterDepth_L.append(depths_linear_smoothed)
             else:
-                WaterDepth_L.append(np.full(config.icmax - dc, np.nan))
+                WaterDepth_L.append(np.full(config.max_cross_shore - dc, np.nan))
         except Exception as e:
             print(f"  Error in depth calculation: {e}")
-            WaterDepth_L.append(np.full(config.icmax - dc, np.nan))
+            WaterDepth_L.append(np.full(config.max_cross_shore - dc, np.nan))
 
         # G10: Average timestack for visualization (MATLAB line 281)
         try:
@@ -650,7 +658,7 @@ def main():
             wave_heights=np.array(Hs_TS),
             wave_periods=np.array(Tp_TS),
             water_levels=water_depth_values,
-            rotation=config.rotation,
+            rotation=config.rotation_angle,
             filename='coastcams_matlab_summary.png'
         )
 
