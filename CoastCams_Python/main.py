@@ -465,6 +465,9 @@ class CoastCamsWorkflow:
                 depth_profiles_list.append(r['depth_profile'])
                 cross_shore_pos_list.append(r.get('cross_shore_positions'))
 
+        print(f"\n=== Depth Profile Collection ===")
+        print(f"Collected {len(depth_profiles_list)} depth profiles from {len(all_results)} timestacks")
+
         if len(depth_profiles_list) > 0:
             # Stack into 2D matrix: (num_timestacks × num_spatial_positions)
             min_length = min(len(profile) for profile in depth_profiles_list)
@@ -624,6 +627,18 @@ class CoastCamsWorkflow:
         else:
             average_timestack = None
             print("Warning: No average timestack profiles available")
+
+        # Debug: Print what's being stored
+        print(f"\n=== Results Summary ===")
+        print(f"water_depths_array: {water_depths_array if isinstance(water_depths_array, np.ndarray) else 'Not an array'}")
+        if isinstance(water_depths_array, np.ndarray):
+            print(f"  Shape: {water_depths_array.shape}, Non-NaN: {np.sum(~np.isnan(water_depths_array))}/{len(water_depths_array)}")
+        print(f"slas (SLA_L): {slas if isinstance(slas, np.ndarray) else 'Not an array'}")
+        if isinstance(slas, np.ndarray):
+            print(f"  Shape: {slas.shape}, Non-NaN: {np.sum(~np.isnan(slas))}/{len(slas)}")
+        print(f"sla_shallow (SLA_S): {sla_shallow if isinstance(sla_shallow, np.ndarray) else 'Not an array'}")
+        if isinstance(sla_shallow, np.ndarray):
+            print(f"  Shape: {sla_shallow.shape}, Non-NaN: {np.sum(~np.isnan(sla_shallow))}/{len(sla_shallow)}")
 
         # Store in results dictionary
         self.results = {

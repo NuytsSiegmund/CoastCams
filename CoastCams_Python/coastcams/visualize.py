@@ -177,7 +177,7 @@ class CoastCamsVisualizer:
         Parameters
         ----------
         timestack : np.ndarray
-            2D timestack array (space x time)
+            2D timestack array (time x space) - will be transposed for display
         timestamps : List[datetime], optional
             Time axis labels
         cross_shore_positions : np.ndarray, optional
@@ -189,8 +189,13 @@ class CoastCamsVisualizer:
         """
         fig, ax = plt.subplots(figsize=(12, 6))
 
+        # CRITICAL: Transpose timestack from (time x space) to (space x time)
+        # so that time appears on x-axis (imshow shows columns as x-axis)
+        # This matches MATLAB's imagesc(Time_TS, 1:size(stack,1), stack)
+        timestack_display = timestack.T  # Transpose: (space x time)
+
         # Plot timestack
-        im = ax.imshow(timestack, aspect='auto', cmap='viridis', origin='lower')
+        im = ax.imshow(timestack_display, aspect='auto', cmap='viridis', origin='lower')
 
         ax.set_xlabel('Time', fontsize=12)
         ax.set_ylabel('Cross-shore Position (pixels)', fontsize=12)
@@ -419,7 +424,9 @@ class CoastCamsVisualizer:
         # 1. Timestack
         if 'timestack' in results:
             ax1 = fig.add_subplot(gs[0, :])
-            im = ax1.imshow(results['timestack'], aspect='auto',
+            # CRITICAL: Transpose from (time x space) to (space x time) for correct display
+            timestack_display = results['timestack'].T
+            im = ax1.imshow(timestack_display, aspect='auto',
                           cmap='viridis', origin='lower')
             ax1.set_title('Timestack Image', fontsize=12, fontweight='bold')
             ax1.set_xlabel('Time')
