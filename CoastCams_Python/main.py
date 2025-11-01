@@ -124,8 +124,23 @@ def main():
     # Set up paths
     repo_path = Path(__file__).parent.parent
     img_path = repo_path / 'Timestacks'
+
+    # Resolve output directory path
     out_path = Path(config.output_dir)
-    out_path.mkdir(parents=True, exist_ok=True)
+    if not out_path.is_absolute():
+        # If relative, resolve relative to repo path
+        out_path = repo_path / config.output_dir
+
+    # Create output directory
+    try:
+        out_path.mkdir(parents=True, exist_ok=True)
+    except PermissionError as e:
+        # Fall back to a safe location if we don't have permissions
+        import tempfile
+        out_path = Path(tempfile.gettempdir()) / 'CoastCams_Output'
+        out_path.mkdir(parents=True, exist_ok=True)
+        print(f"Warning: Could not create output directory at {config.output_dir}")
+        print(f"Using temporary directory: {out_path}")
 
     # Calculate dt from acquisition frequency
     dt = 1.0 / config.acquisition_frequency
