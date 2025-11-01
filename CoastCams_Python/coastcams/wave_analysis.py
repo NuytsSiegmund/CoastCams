@@ -674,9 +674,30 @@ class WaveAnalyzer:
         if len(valid_psd) == 0:
             return np.nan
 
-        # Find peak frequency
+        # Find peak frequency with parabolic interpolation for sub-bin accuracy
         peak_idx = np.argmax(valid_psd)
-        peak_freq = valid_freqs[peak_idx]
+
+        # Apply parabolic interpolation if peak is not at edges
+        if 0 < peak_idx < len(valid_psd) - 1:
+            # Use three points around the peak for parabolic fit
+            alpha = valid_psd[peak_idx - 1]
+            beta = valid_psd[peak_idx]
+            gamma = valid_psd[peak_idx + 1]
+
+            # Parabolic interpolation formula for peak location
+            # p = 0.5 * (alpha - gamma) / (alpha - 2*beta + gamma)
+            denom = alpha - 2*beta + gamma
+            if abs(denom) > 1e-10:  # Avoid division by zero
+                p = 0.5 * (alpha - gamma) / denom
+                # Refined peak index (fractional)
+                refined_idx = peak_idx + p
+                # Interpolate frequency
+                freq_resolution = valid_freqs[1] - valid_freqs[0] if len(valid_freqs) > 1 else 0
+                peak_freq = valid_freqs[peak_idx] + p * freq_resolution
+            else:
+                peak_freq = valid_freqs[peak_idx]
+        else:
+            peak_freq = valid_freqs[peak_idx]
 
         # Convert to period
         peak_period = 1.0 / peak_freq if peak_freq > 0 else np.nan
