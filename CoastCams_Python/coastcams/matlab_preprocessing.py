@@ -515,24 +515,21 @@ class PhotogrammetricHeightCalculator:
             # Wave face angle at breaking (MATLAB line 403)
             wave_face_angle = np.deg2rad(35.0)
 
-            # Camera angle (FIXED for entire session) (MATLAB line 402)
-            # IMPORTANT: Camera angle should be CONSTANT (camera is fixed installation)
-            # Use MEAN breaking distance as reference, not individual distances
-            # MATLAB: AngleCam = abs(z0./X1) = height/distance = tan(angle_from_horizontal)
+            # Camera angles for each breaking position (MATLAB line 402)
+            # MATLAB: AngleCam = abs(z0./X1(PosX))
+            # Camera height z0 is fixed, but angle varies based on distance X1(PosX)
+            # Each breaking wave is at different distance, so gets different angle!
             distances = cross_shore_positions[PosX]
-            reference_distance = np.nanmean(distances)  # Use mean as fixed reference
-            print(f"    Breaking wave distances: min={np.min(distances):.1f}m, max={np.max(distances):.1f}m, ref={reference_distance:.1f}m")
+            print(f"    Breaking wave distances: min={np.min(distances):.1f}m, max={np.max(distances):.1f}m")
 
-            # Calculate FIXED camera angle using reference distance
-            # angle_from_horizontal = atan(height/distance)
-            # angle_from_vertical = π/2 - angle_from_horizontal
-            angle_from_horizontal = np.arctan(np.abs(self.camera_height / reference_distance))
+            # Calculate angle for EACH wave based on its distance from camera
+            # AngleCam = z0/X1 = tan(angle_from_horizontal)
+            # For photogrammetry: angle_from_vertical = π/2 - atan(z0/X1)
+            angle_from_horizontal = np.arctan(np.abs(self.camera_height / distances))
             angle_from_vertical = np.pi/2 - angle_from_horizontal
-            fixed_tan_camera_angle = np.tan(angle_from_vertical)
-            print(f"    Fixed camera angle: {np.rad2deg(angle_from_vertical):.2f}° from vertical (tan={fixed_tan_camera_angle:.6f})")
+            tan_camera_angle = np.tan(angle_from_vertical)
 
-            # Use same fixed angle for all waves (camera doesn't move!)
-            tan_camera_angle = np.full(len(PosX), fixed_tan_camera_angle)
+            print(f"    Camera angles (varying per wave): mean={np.rad2deg(angle_from_vertical).mean():.2f}°, std={np.rad2deg(angle_from_vertical).std():.2f}°")
 
             # Smooth roller lengths (MATLAB line 406)
             Lwi = np.nanmax(Lw, axis=0)
@@ -654,9 +651,12 @@ class PhotogrammetricHeightCalculator:
             # AngleCam is tan(angle), so we DON'T apply tan() again
             # cor = L1 .* AngleCam / tan(AngleWaveFront)
             # Lf = (L1 - correction) .* AngleCam
-            # Use fixed_tan_camera_angle (already calculated above)
-            correction = L1 * fixed_tan_camera_angle / np.tan(wave_face_angle)
-            Lf = (L1 - correction) * fixed_tan_camera_angle
+            # Use median of tan_camera_angle array (MATLAB uses nanmean)
+            median_tan_angle = np.nanmean(tan_camera_angle)
+            print(f"    Camera tan(angle): mean={median_tan_angle:.6f}")
+
+            correction = L1 * median_tan_angle / np.tan(wave_face_angle)
+            Lf = (L1 - correction) * median_tan_angle
 
             print(f"    After photogrammetric conversion:")
             print(f"      Correction: min={np.min(correction):.3f}, max={np.max(correction):.3f}")
