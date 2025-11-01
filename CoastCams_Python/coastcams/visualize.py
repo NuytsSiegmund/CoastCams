@@ -108,31 +108,24 @@ class CoastCamsVisualizer:
         ax1.set_ylabel('Cross-shore distance [pixels]', fontsize=12)
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
 
-        # Subplot 2: Mean Sea Level (water depth)
-        if water_levels is not None and not np.all(np.isnan(water_levels)):
-            # Plot mean sea level as time series
-            ax2.plot(timestamps, water_levels, 'c.-', linewidth=2, markersize=6)
-            ax2.set_title('Mean Sea Level', fontsize=14, fontweight='bold')
-            ax2.set_ylabel('Water Depth [m]', fontsize=12)
-            ax2.grid(True, alpha=0.3)
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        elif sla_matrix is not None and not np.all(np.isnan(sla_matrix)):
-            # Fallback: show SLA matrix if water levels not available
+        # Subplot 2: Sea Level Anomaly (SLA) as 2D colormap
+        # Matches MATLAB: imagesc(time_SLA, 1:size(SLA_S, 2), SLA_S')
+        if sla_matrix is not None and not np.all(np.isnan(sla_matrix)):
             time_sla = np.linspace(time_nums[0], time_nums[-1], sla_matrix.shape[0])
             im2 = ax2.imshow(sla_matrix.T, aspect='auto', cmap='jet',
                            extent=[time_sla[0], time_sla[-1], 0, sla_matrix.shape[1]],
                            origin='lower')
             ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
-            ax2.set_ylabel('Cross-shore position [pixels]', fontsize=12)
+            ax2.set_ylabel('Timestack Image Number', fontsize=12)
             ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
             cbar = plt.colorbar(im2, ax=ax2, orientation='vertical', pad=0.02)
             cbar.set_label('SLA [m]', fontsize=10)
         else:
-            ax2.text(0.5, 0.5, 'Water level data not available',
+            ax2.text(0.5, 0.5, 'SLA data not available',
                     transform=ax2.transAxes, ha='center', va='center',
                     fontsize=12, color='red')
-            ax2.set_title('Mean Sea Level', fontsize=14, fontweight='bold')
-            ax2.set_ylabel('Water Depth [m]', fontsize=12)
+            ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('Timestack Image Number', fontsize=12)
 
         # Subplot 3: Significant Wave Height
         ax3.plot(timestamps, wave_heights, 'r.-', linewidth=1.5, markersize=6)

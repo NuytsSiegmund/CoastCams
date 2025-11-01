@@ -503,10 +503,12 @@ def main():
 
         # Calculate SLA (MATLAB line 266-267)
         # SLA = smoothed - mean(smoothed)
+        # MATLAB's nanmean() on 2D array operates along columns (dim 1)
+        # Python needs axis=0 to match: mean across TIME at each SPATIAL position
         sLimit_size = min(Csmooth_S.shape[1], Csmooth_L.shape[1])
 
-        SLA_S = Csmooth_S[:, :sLimit_size] - np.nanmean(Csmooth_S[:, :sLimit_size])
-        SLA_L = Csmooth_L[:, :sLimit_size] - np.nanmean(Csmooth_L[:, :sLimit_size])
+        SLA_S = Csmooth_S[:, :sLimit_size] - np.nanmean(Csmooth_S[:, :sLimit_size], axis=0)
+        SLA_L = Csmooth_L[:, :sLimit_size] - np.nanmean(Csmooth_L[:, :sLimit_size], axis=0)
 
         print(f"  SLA_S matrix: {SLA_S.shape}")
         print(f"  SLA_L matrix: {SLA_L.shape}")
