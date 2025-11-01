@@ -576,6 +576,22 @@ def main():
         # Create cross-shore distance array
         x_bathymetry = np.arange(len(Bathymetry)) * config.pixel_resolution
 
+        # Calculate breakpoint depths from bathymetry profile
+        # BreakpointLocation is in meters, need to convert to pixel index
+        print("\nCalculating breakpoint depths from bathymetry...")
+        for i, bp_loc in enumerate(BreakpointLocation):
+            if not np.isnan(bp_loc) and bp_loc >= 0:
+                # Convert meters to pixel index
+                pixel_idx = int(bp_loc / config.pixel_resolution)
+                # Check if index is within bathymetry array bounds
+                if 0 <= pixel_idx < len(Bathymetry):
+                    BreakpointDepth[i] = Bathymetry[pixel_idx]
+                    print(f"  Timestack {i+1}: BP location = {bp_loc:.2f}m (pixel {pixel_idx}), depth = {BreakpointDepth[i]:.3f}m")
+                else:
+                    print(f"  Timestack {i+1}: BP location {bp_loc:.2f}m out of bathymetry bounds (0-{len(Bathymetry)-1} pixels)")
+            else:
+                print(f"  Timestack {i+1}: No valid breakpoint location")
+
     except Exception as e:
         print(f"  Error calculating bathymetry: {e}")
         import traceback
