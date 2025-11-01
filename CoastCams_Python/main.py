@@ -217,27 +217,13 @@ def main():
 
     preprocessor = ImagePreprocessor(config=config)
 
-    wave_analyzer = WaveAnalyzer(
-        dt=dt,
-        period_range=(config.wave_period_min, config.wave_period_max)
-    )
+    wave_analyzer = WaveAnalyzer(config=config)
 
-    correlation_analyzer = CrossCorrelationAnalyzer(
-        dpha=config.time_lag,
-        dt=dt,
-        dc=config.correlation_spacing
-    )
+    correlation_analyzer = CrossCorrelationAnalyzer(config=config)
 
-    matlab_preprocessor = MATLABPreprocessor(
-        camera_height=config.camera_height,
-        pixel_resolution=config.pixel_resolution,
-        dt=dt
-    )
+    matlab_preprocessor = MATLABPreprocessor(dt=dt, use_radon=True)
 
-    bathymetry_estimator = BathymetryEstimator(
-        peak_period=config.wave_period_max,  # Will be updated per timestack
-        pixel_resolution=config.pixel_resolution
-    )
+    bathymetry_estimator = BathymetryEstimator(config=config)
 
     visualizer = CoastCamsVisualizer(
         output_dir=str(out_path),
@@ -310,9 +296,12 @@ def main():
         # This is equivalent to calling WaveParameters_CoastCams in MATLAB
         print("[4/7] Analyzing wave parameters...")
         try:
+            # Create cross-shore positions array
+            cross_shore_positions = np.arange(preprocessed.shape[1]) * config.pixel_resolution
+
             wave_results = wave_analyzer.analyze_timestack(
                 preprocessed,
-                matlab_processor=matlab_preprocessor
+                cross_shore_positions=cross_shore_positions
             )
 
             # Extract results
