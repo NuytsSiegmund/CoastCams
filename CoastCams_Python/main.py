@@ -355,17 +355,25 @@ def main():
             Cf1 = corr_results.get('Cf1', np.array([]))
             WLe1 = corr_results.get('WLe1', np.array([]))
 
+            # Debug output
+            print(f"  DEBUG: Cf1 shape: {Cf1.shape if len(Cf1) > 0 else 'empty'}")
+            if len(Cf1) > 0:
+                print(f"  DEBUG: Cf1 non-NaN values: {np.sum(~np.isnan(Cf1))}/{len(Cf1)}")
+                print(f"  DEBUG: Cf1 range: [{np.nanmin(Cf1):.2f}, {np.nanmax(Cf1):.2f}]")
+
             if len(Cf1) > 0:
                 # Apply movmean smoothing (MATLAB line 242-243)
-                # MATLAB divides by 10 - likely converting units
-                Cf1_smoothed = movmean(Cf1, 10)
+                # CRITICAL: MATLAB divides by 10 (line 242: Cf1./10)
+                Cf1_smoothed = movmean(Cf1 / 10.0, 10)  # Add /10 division!
                 WLe1_smoothed = movmean(WLe1, 10)
 
                 WaveCelerity.append(Cf1_smoothed)
                 WaveLength.append(WLe1_smoothed)
+                print(f"  DEBUG: Stored celerity array with {np.sum(~np.isnan(Cf1_smoothed))} non-NaN values")
             else:
                 WaveCelerity.append(np.full(config.max_cross_shore - dc, np.nan))
                 WaveLength.append(np.full(config.max_cross_shore - dc, np.nan))
+                print(f"  WARNING: No valid correlation results, storing NaN array")
 
         except Exception as e:
             print(f"  Error in cross-correlation: {e}")
@@ -455,8 +463,15 @@ def main():
     Stack_av = pad_to_matrix(Stack_av)
 
     print(f"WaveCelerity matrix: {WaveCelerity.shape} (timestacks × spatial points)")
+    print(f"  Non-NaN values: {np.sum(~np.isnan(WaveCelerity))}/{WaveCelerity.size}")
+    print(f"  Value range: [{np.nanmin(WaveCelerity):.3f}, {np.nanmax(WaveCelerity):.3f}]")
+
     print(f"WaterDepth_L matrix: {WaterDepth_L.shape} (timestacks × spatial points)")
+    print(f"  Non-NaN values: {np.sum(~np.isnan(WaterDepth_L))}/{WaterDepth_L.size}")
+    print(f"  Value range: [{np.nanmin(WaterDepth_L):.3f}, {np.nanmax(WaterDepth_L):.3f}]")
+
     print(f"WaterDepth (photogrammetry) matrix: {WaterDepth.shape}")
+    print(f"  Non-NaN values: {np.sum(~np.isnan(WaterDepth))}/{WaterDepth.size}")
 
     # =====================================================================
     # F: Calculate Sea Level Anomaly (MATLAB line 256-272)
