@@ -197,13 +197,17 @@ def main():
     # =====================================================================
 
     print("[1/7] Loading timestack images...")
-    loader = ImageLoader(str(img_path))
+    loader = ImageLoader(str(img_path), rotation_angle=config.rotation_angle)
 
-    if len(loader.image_paths) == 0:
+    # Discover images in directory
+    num_images = loader.discover_images(pattern="S_*.jpeg")
+
+    if num_images == 0:
         print(f"Error: No images found in {img_path}")
         return
 
-    loader.summarize()
+    # Print summary
+    print(loader.get_summary())
 
     # Initialize analyzers
     shoreline_detector = ShorelineDetector(
@@ -244,7 +248,7 @@ def main():
         save_plots=True
     )
 
-    print(f"\nNOTE: Processing {len(loader.image_paths)} timestack images individually")
+    print(f"\nNOTE: Processing {len(loader.image_files)} timestack images individually")
     print("(Each image is a space x time array analyzed independently)\n")
 
     # =====================================================================
@@ -253,9 +257,9 @@ def main():
 
     dc = config.correlation_spacing
 
-    for i, (timestamp, image_path) in enumerate(zip(loader.timestamps, loader.image_paths)):
+    for i, (timestamp, image_path) in enumerate(zip(loader.timestamps, loader.image_files)):
         print("="*70)
-        print(f"Image {i+1}/{len(loader.image_paths)}: {timestamp}")
+        print(f"Image {i+1}/{len(loader.image_files)}: {timestamp}")
         print("="*70)
 
         # G1: Extract datetime (MATLAB line 110)
@@ -263,7 +267,7 @@ def main():
 
         # G2: Load timestack (MATLAB line 116)
         try:
-            timestack = loader.load_single_image(i)
+            timestack = loader.load_image(i)
             print(f"  Loaded timestack shape: {timestack.shape}")
         except Exception as e:
             print(f"  Error loading image: {e}")
