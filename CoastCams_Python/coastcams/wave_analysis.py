@@ -223,35 +223,31 @@ class WaveAnalyzer:
                     results['break_depth'] = np.nan
 
                 else:
-                    # Fallback to time series method
-                    calibration_factor = 2.0
-                    results['mean_Hs'] = Hs_from_ts * calibration_factor
-                    results['mean_Hm'] = results['mean_Hs'] * 0.7
+                    # Photogrammetry failed - return NaN rather than unreliable fallback
+                    print(f"  Photogrammetric height invalid (Lf <= 0), setting to NaN")
+                    results['mean_Hs'] = np.nan
+                    results['mean_Hm'] = np.nan
                     results['roller_length'] = np.nan
                     results['break_location'] = np.nan
                     results['break_depth'] = np.nan
-                    print(f"  Wave height (fallback - time series): Hs = {results['mean_Hs']:.3f}m")
             else:
-                # No breaking waves detected, use fallback
-                print(f"  No breaking waves detected, using fallback method")
-                calibration_factor = 2.0
-                results['mean_Hs'] = Hs_from_ts * calibration_factor
-                results['mean_Hm'] = results['mean_Hs'] * 0.7
+                # No breaking waves detected - return NaN
+                print(f"  No breaking waves detected, setting wave height to NaN")
+                results['mean_Hs'] = np.nan
+                results['mean_Hm'] = np.nan
                 results['roller_length'] = np.nan
                 results['break_location'] = np.nan
                 results['break_depth'] = np.nan
-                print(f"  Wave height (fallback): Hs = {results['mean_Hs']:.3f}m")
 
         except Exception as e:
             print(f"  Photogrammetric pipeline error: {e}")
-            # Fallback to time series method
-            calibration_factor = 2.0
-            results['mean_Hs'] = Hs_from_ts * calibration_factor
-            results['mean_Hm'] = results['mean_Hs'] * 0.7
+            # Return NaN rather than unreliable fallback
+            results['mean_Hs'] = np.nan
+            results['mean_Hm'] = np.nan
             results['roller_length'] = np.nan
             results['break_location'] = np.nan
             results['break_depth'] = np.nan
-            print(f"  Wave height (error fallback): Hs = {results['mean_Hs']:.3f}m")
+            print(f"  Setting wave height to NaN due to error")
 
         # Ensure all parameters have default values
         results.setdefault('roller_length', np.nan)

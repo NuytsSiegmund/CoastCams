@@ -370,15 +370,14 @@ def main():
 
             if len(Cf1) > 0:
                 # Apply movmean smoothing (MATLAB line 242-243)
-                # CRITICAL: MATLAB divides by 10 (line 242: Cf1./10)
-                Cf1_divided = Cf1 / 10.0
-                print(f"  DEBUG: After /10 division: {np.sum(~np.isnan(Cf1_divided))}/{len(Cf1_divided)} non-NaN values")
-
-                Cf1_smoothed = movmean(Cf1_divided, 10)  # NaN-aware smoothing
+                # NOTE: Python's cross-correlation already converts to m/s (multiplies by dx=0.1)
+                # MATLAB's Cf1 is in pixels/s, so it needs /10. Python's Cf1 is already in m/s!
+                # Do NOT divide by 10 here - that would be double-conversion.
+                Cf1_smoothed = movmean(Cf1, 10)  # NaN-aware smoothing
                 WLe1_smoothed = movmean(WLe1, 10)
 
                 print(f"  DEBUG: After smoothing: {np.sum(~np.isnan(Cf1_smoothed))}/{len(Cf1_smoothed)} non-NaN values")
-                print(f"  DEBUG: Smoothed range: [{np.nanmin(Cf1_smoothed):.3f}, {np.nanmax(Cf1_smoothed):.3f}]")
+                print(f"  DEBUG: Smoothed celerity range: [{np.nanmin(Cf1_smoothed):.3f}, {np.nanmax(Cf1_smoothed):.3f}] m/s")
 
                 WaveCelerity.append(Cf1_smoothed)
                 WaveLength.append(WLe1_smoothed)
