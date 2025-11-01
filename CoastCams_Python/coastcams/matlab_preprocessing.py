@@ -655,12 +655,28 @@ class PhotogrammetricHeightCalculator:
             median_tan_angle = np.nanmean(tan_camera_angle)
             print(f"    Camera tan(angle): mean={median_tan_angle:.6f}")
 
+            # Check for unreasonable tan angle (suggests waves too close to camera)
+            if median_tan_angle > 10.0:
+                print(f"    WARNING: Unreasonable camera angle (tan={median_tan_angle:.2f})")
+                print(f"             Waves may be too close to camera for accurate photogrammetry")
+                print(f"             Minimum distance: {np.min(distances):.1f}m")
+                return np.nan, np.nan
+
             correction = L1 * median_tan_angle / np.tan(wave_face_angle)
             Lf = (L1 - correction) * median_tan_angle
 
             print(f"    After photogrammetric conversion:")
             print(f"      Correction: min={np.min(correction):.3f}, max={np.max(correction):.3f}")
             print(f"      Lf: min={np.min(Lf):.3f}, max={np.max(Lf):.3f}")
+
+            # Check for absurd heights BEFORE filtering
+            if np.any(Lf > 20.0):
+                print(f"    WARNING: Absurd wave heights detected (max={np.max(Lf):.1f}m > 20m)")
+                print(f"             L1 range: [{np.min(L1):.2f}, {np.max(L1):.2f}]")
+                print(f"             Correction range: [{np.min(correction):.2f}, {np.max(correction):.2f}]")
+                print(f"             tan_camera_angle: {median_tan_angle:.6f}")
+                # Filter out absurd values
+                Lf[Lf > 20.0] = np.nan
 
             # Filter valid heights (MATLAB line 428)
             ind = np.where((Lf > 0) & ~np.isnan(Lf))[0]
