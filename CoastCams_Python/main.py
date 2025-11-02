@@ -272,11 +272,27 @@ def main():
             continue
 
         # G3: Extract shoreline position (MATLAB line 126)
+        # IMPORTANT: Apply to ROTATED timestack to match MATLAB coordinate system
         print("[2/7] Detecting shoreline...")
         try:
-            shoreline = shoreline_detector.detect(timestack)
-            shoreline_pos = np.nanmean(shoreline) * config.pixel_resolution
-            ShorePosition.append(shoreline_pos)
+            # Rotate timestack before shoreline detection (MATLAB line 123)
+            from scipy.ndimage import rotate
+            timestack_rot = rotate(timestack, config.rotation_angle, reshape=True, order=1)
+
+            shoreline = shoreline_detector.detect(timestack_rot)
+            # After rotation (270°), the cross-shore dimension is now vertical
+            # Pixel 0 (top) = offshore, Pixel max (bottom) = onshore
+            # So we need to invert: position_meters = (max - pixel) * resolution
+            if shoreline is not None and len(shoreline) > 0:
+                # Get the spatial dimension size after rotation
+                spatial_dim = timestack_rot.shape[0]  # Rows = cross-shore after 270° rotation
+                # Invert coordinates: pixel 0 (top/offshore) → max distance, pixel max (bottom/onshore) → 0 distance
+                shoreline_inverted = spatial_dim - shoreline
+                shoreline_pos = np.nanmean(shoreline_inverted) * config.pixel_resolution
+                ShorePosition.append(shoreline_pos)
+                print(f"  Shoreline position: {shoreline_pos:.2f}m")
+            else:
+                ShorePosition.append(np.nan)
         except Exception as e:
             print(f"  Warning: Shoreline detection failed: {e}")
             ShorePosition.append(np.nan)
