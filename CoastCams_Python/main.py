@@ -738,6 +738,8 @@ def main():
             water_levels=water_depth_values,
             breakpoint_locations=np.array(BreakpointLocation),
             shoreline_positions=np.array(ShorePosition),
+            bathymetry=Bathymetry,
+            bathymetry_x=x_bathymetry,
             rotation=config.rotation_angle,
             filename='coastcams_matlab_summary.png'
         )

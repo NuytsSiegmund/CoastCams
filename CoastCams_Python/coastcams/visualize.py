@@ -53,14 +53,16 @@ class CoastCamsVisualizer:
                                  water_levels: Optional[np.ndarray] = None,
                                  breakpoint_locations: Optional[np.ndarray] = None,
                                  shoreline_positions: Optional[np.ndarray] = None,
+                                 bathymetry: Optional[np.ndarray] = None,
+                                 bathymetry_x: Optional[np.ndarray] = None,
                                  rotation: int = 270,
                                  filename: str = 'coastcams_matlab_summary.png'):
         """
         Create MATLAB-style comprehensive summary plot.
 
-        Matches plot_coastcams_main.m with 4 subplots:
+        4 subplots:
         1. Average Timestack (grayscale image) with breakpoint and shoreline overlays
-        2. Sea Level Anomaly (SLA) as 2D colormap
+        2. Mean Water Level time series (point data)
         3. Significant Wave Height time series
         4. Peak Wave Period time series
 
@@ -71,7 +73,7 @@ class CoastCamsVisualizer:
         average_timestack : np.ndarray
             Average intensity profile for each timestack (num_images × spatial_pixels)
         sla_matrix : np.ndarray, optional
-            SLA matrix (num_images × spatial_pixels)
+            SLA matrix (num_images × spatial_pixels) - plotted in separate figure
         wave_heights : np.ndarray
             Significant wave heights for each timestamp
         wave_periods : np.ndarray
@@ -79,9 +81,13 @@ class CoastCamsVisualizer:
         water_levels : np.ndarray, optional
             Mean sea level / water depth per timestamp (1D array)
         breakpoint_locations : np.ndarray, optional
-            Breakpoint locations for each timestamp (in pixels)
+            Breakpoint locations for each timestamp (in meters)
         shoreline_positions : np.ndarray, optional
-            Shoreline positions for each timestamp (in pixels)
+            Shoreline positions for each timestamp (in meters)
+        bathymetry : np.ndarray, optional
+            Bathymetry profile (1D array) - plotted in separate figure
+        bathymetry_x : np.ndarray, optional
+            Cross-shore distances for bathymetry (1D array)
         rotation : int
             Rotation angle (default: 270)
         filename : str
@@ -154,33 +160,31 @@ class CoastCamsVisualizer:
 
         ax1.set_title('Average Timestack', fontsize=14, fontweight='bold')
         ax1.set_ylabel('Cross-shore distance [pixels]', fontsize=12)
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        # Remove x-axis label (only on bottom subplot)
+        ax1.set_xticklabels([])
 
-        # Subplot 2: Sea Level Anomaly (SLA) as 2D colormap
-        # Matches MATLAB: imagesc(time_SLA, 1:size(SLA_S, 2), SLA_S')
-        if sla_matrix is not None and not np.all(np.isnan(sla_matrix)):
-            time_sla = np.linspace(time_nums[0], time_nums[-1], sla_matrix.shape[0])
-            im2 = ax2.imshow(sla_matrix.T, aspect='auto', cmap='jet',
-                           extent=[time_sla[0], time_sla[-1], 0, sla_matrix.shape[1]],
-                           origin='lower')
-            ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
-            ax2.set_ylabel('Timestack Image Number', fontsize=12)
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-            cbar = plt.colorbar(im2, ax=ax2, orientation='vertical', pad=0.02)
-            cbar.set_label('SLA [m]', fontsize=10)
+        # Subplot 2: Mean Water Level time series (point data)
+        if water_levels is not None and len(water_levels) > 0:
+            ax2.plot(timestamps, water_levels, 'g.-', linewidth=1.5, markersize=6, label='Water Level')
+            ax2.set_title('Mean Water Level', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('Water Level [m]', fontsize=12)
+            ax2.grid(True, alpha=0.3)
         else:
-            ax2.text(0.5, 0.5, 'SLA data not available',
+            ax2.text(0.5, 0.5, 'Water level data not available',
                     transform=ax2.transAxes, ha='center', va='center',
                     fontsize=12, color='red')
-            ax2.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
-            ax2.set_ylabel('Timestack Image Number', fontsize=12)
+            ax2.set_title('Mean Water Level', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('Water Level [m]', fontsize=12)
+        # Remove x-axis label (only on bottom subplot)
+        ax2.set_xticklabels([])
 
         # Subplot 3: Significant Wave Height
         ax3.plot(timestamps, wave_heights, 'r.-', linewidth=1.5, markersize=6)
         ax3.set_title('Significant Wave Height', fontsize=14, fontweight='bold')
         ax3.set_ylabel('$H_s$ [m]', fontsize=12)
         ax3.grid(True, alpha=0.3)
-        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        # Remove x-axis label (only on bottom subplot)
+        ax3.set_xticklabels([])
 
         # Subplot 4: Peak Wave Period
         ax4.plot(timestamps, wave_periods, 'b.-', linewidth=1.5, markersize=6)
@@ -196,6 +200,107 @@ class CoastCamsVisualizer:
 
         # Adjust layout
         plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+        # Save figure
+        if self.save_plots:
+            output_path = os.path.join(self.output_dir, filename)
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            print(f"  Saved: {output_path}")
+
+        plt.show()
+
+        # Create separate SLA figure if data is available
+        if sla_matrix is not None and not np.all(np.isnan(sla_matrix)):
+            self.plot_sla_matrix(timestamps, sla_matrix, filename='sla_matrix.png')
+
+        # Create separate bathymetry figure if data is available
+        if bathymetry is not None and bathymetry_x is not None:
+            self.plot_bathymetry(bathymetry_x, bathymetry, filename='bathymetry_profile.png')
+
+        return fig
+
+    def plot_sla_matrix(self, timestamps: List[datetime],
+                       sla_matrix: np.ndarray,
+                       filename: str = 'sla_matrix.png'):
+        """
+        Create separate figure showing Sea Level Anomaly (SLA) as 2D raster.
+
+        Parameters
+        ----------
+        timestamps : List[datetime]
+            Timestamps for each image
+        sla_matrix : np.ndarray
+            SLA matrix (num_images × spatial_pixels)
+        filename : str
+            Output filename
+        """
+        print(f"\nCreating SLA matrix plot...")
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        # Convert timestamps to matplotlib dates
+        time_nums = mdates.date2num(timestamps)
+        time_sla = np.linspace(time_nums[0], time_nums[-1], sla_matrix.shape[0])
+
+        # Plot SLA matrix
+        im = ax.imshow(sla_matrix.T, aspect='auto', cmap='jet',
+                      extent=[time_sla[0], time_sla[-1], 0, sla_matrix.shape[1]],
+                      origin='lower')
+
+        ax.set_title('Sea Level Anomaly (SLA)', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Time', fontsize=12)
+        ax.set_ylabel('Cross-shore Position [pixels]', fontsize=12)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
+        cbar.set_label('SLA [m]', fontsize=11)
+
+        plt.tight_layout()
+
+        # Save figure
+        if self.save_plots:
+            output_path = os.path.join(self.output_dir, filename)
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            print(f"  Saved: {output_path}")
+
+        plt.show()
+
+        return fig
+
+    def plot_bathymetry(self, x: np.ndarray,
+                       bathymetry: np.ndarray,
+                       filename: str = 'bathymetry_profile.png'):
+        """
+        Create separate figure showing bathymetry profile.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Cross-shore distance array (meters)
+        bathymetry : np.ndarray
+            Bathymetry depth values (meters)
+        filename : str
+            Output filename
+        """
+        print(f"\nCreating bathymetry profile plot...")
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        # Plot bathymetry profile
+        ax.plot(x, bathymetry, 'b-', linewidth=2, label='Mean Bathymetry')
+        ax.fill_between(x, bathymetry, alpha=0.3)
+
+        ax.set_title('Mean Bathymetry Profile', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Cross-shore distance [m]', fontsize=12)
+        ax.set_ylabel('Depth [m]', fontsize=12)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='best', fontsize=11)
+
+        # Invert y-axis to show depth properly (positive down)
+        ax.invert_yaxis()
+
+        plt.tight_layout()
 
         # Save figure
         if self.save_plots:
