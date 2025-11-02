@@ -324,9 +324,6 @@ def main():
             break_location = wave_results.get('break_location', np.nan)
             break_depth = wave_results.get('break_depth', np.nan)
 
-            # depth_s from photogrammetry (MATLAB line 210, 218)
-            depth_s = wave_results.get('depth_profile', None)
-
             Hs_TS.append(hs)
             Tm_TS.append(Tm)
             Tp_TS.append(Tp)
@@ -344,19 +341,9 @@ def main():
             RollerLength.append(np.nan)
             BreakpointLocation.append(np.nan)
             BreakpointDepth.append(np.nan)
-            depth_s = None
-
-        # Store depth_s with movmean smoothing (MATLAB line 218)
-        if depth_s is not None and not np.all(np.isnan(depth_s)):
-            # MATLAB divides by 10 and applies movmean(10)
-            # This suggests depth_s might be in different units (cm?)
-            depth_s_smoothed = movmean(depth_s, 10)
-            WaterDepth.append(depth_s_smoothed)
-        else:
-            # Store NaN array of appropriate size
-            WaterDepth.append(np.full(config.max_cross_shore - dc, np.nan))
 
         # G7: Cross-correlation calculations (MATLAB line 234)
+        # Note: depth_s (photogrammetric depth) is calculated after cross-correlation
         print("[5/7] Performing cross-correlation...")
         try:
             corr_results = correlation_analyzer.analyze_timestack(preprocessed)
@@ -385,9 +372,23 @@ def main():
 
                 WaveCelerity.append(Cf1_smoothed)
                 WaveLength.append(WLe1_smoothed)
+
+                # Calculate depth from shallow water equation (MATLAB WaveParameters line 71)
+                # depth_s = C^2 / 9.81
+                print("[5.5/7] Calculating photogrammetric depth (shallow water)...")
+                depth_s = np.power(Cf1_smoothed, 2) / 9.81  # Shallow water equation
+                # Apply smoothing and divide by 10 (MATLAB line 218)
+                depth_s_smoothed = movmean(depth_s / 10, 10)
+                WaterDepth.append(depth_s_smoothed)
+
+                print(f"  DEBUG: depth_s non-NaN values: {np.sum(~np.isnan(depth_s_smoothed))}/{len(depth_s_smoothed)}")
+                if np.any(~np.isnan(depth_s_smoothed)):
+                    print(f"  DEBUG: depth_s range: [{np.nanmin(depth_s_smoothed):.3f}, {np.nanmax(depth_s_smoothed):.3f}] m")
+
             else:
                 WaveCelerity.append(np.full(config.max_cross_shore - dc, np.nan))
                 WaveLength.append(np.full(config.max_cross_shore - dc, np.nan))
+                WaterDepth.append(np.full(config.max_cross_shore - dc, np.nan))
                 print(f"  WARNING: No valid correlation results, storing NaN array")
 
         except Exception as e:
@@ -396,6 +397,7 @@ def main():
             traceback.print_exc()
             WaveCelerity.append(np.full(config.max_cross_shore - dc, np.nan))
             WaveLength.append(np.full(config.max_cross_shore - dc, np.nan))
+            WaterDepth.append(np.full(config.max_cross_shore - dc, np.nan))
 
         # G8: Calculate depth using linear wave theory (MATLAB line 247)
         print("[6/7] Calculating water depth from linear wave theory...")

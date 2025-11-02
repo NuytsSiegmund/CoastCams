@@ -104,20 +104,23 @@ class CoastCamsVisualizer:
 
         # Subplot 1: Average Timestack
         # Stack_av shape: (num_timestacks, num_spatial_positions) e.g., (16, 689)
-        # For plotting with TIME on x-axis and SPACE on y-axis, we need to transpose
-        # so that imshow interprets: rows=space (y-axis), columns=time (x-axis)
+        # MATLAB: rotated_stack = imrotate(uint8(Stack_av), rotation)
+        # Then: imagesc(Time_TS, 1:size(rotated_stack,1), rotated_stack)
+        # This rotates the (16 x 689) matrix by rotation degrees
+        # With rotation=270, (16 x 689) becomes (689 x 16)
+        # Then Time_TS (length 16) goes on x-axis, 1:689 on y-axis
 
-        # Transpose BEFORE rotation: (time, space) → (space, time)
-        stack_for_display = average_timestack.T  # Now (689, 16)
-
-        # Apply rotation if needed
+        # Apply rotation to match MATLAB (do NOT transpose first!)
         from scipy.ndimage import rotate
         if rotation != 0:
-            rotated_stack = rotate(stack_for_display, rotation, reshape=True, order=1)
+            # Note: MATLAB's imrotate rotates counterclockwise for positive angles
+            # scipy's rotate also rotates counterclockwise for positive angles
+            rotated_stack = rotate(average_timestack, rotation, reshape=True, order=1)
         else:
-            rotated_stack = stack_for_display
+            rotated_stack = average_timestack
 
         # Display with imshow
+        # After 270° rotation, (16, 689) becomes (689, 16)
         # extent=[left, right, bottom, top] = [time_start, time_end, 0, num_pixels]
         im1 = ax1.imshow(rotated_stack, aspect='auto', cmap='gray',
                         extent=[time_nums[0], time_nums[-1], 0, rotated_stack.shape[0]],
