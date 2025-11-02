@@ -128,19 +128,27 @@ class CoastCamsVisualizer:
         # Display with imshow
         # After 270° rotation, (16, 689) becomes (689, 16)
         # extent=[left, right, bottom, top] = [time_start, time_end, 0, num_pixels]
+        # With origin='lower': row 0 displayed at bottom, row 688 at top
+        # After rotation: original col 0 (beach) → rotated row 688 (top)
+        #                 original col 688 (sea) → rotated row 0 (bottom)
+        # So: bottom of plot = offshore/sea, top of plot = onshore/beach
         im1 = ax1.imshow(rotated_stack, aspect='auto', cmap='gray',
                         extent=[time_nums[0], time_nums[-1], 0, rotated_stack.shape[0]],
                         origin='lower')
 
         # Create secondary y-axis for distance in meters
-        # Assume pixel_resolution = 0.1 m/pixel (standard for CoastCams)
         pixel_resolution = 0.1  # m/pixel
+        max_distance = rotated_stack.shape[0] * pixel_resolution
         ax1_right = ax1.twinx()
-        ax1_right.set_ylim(0, rotated_stack.shape[0] * pixel_resolution)
-        ax1_right.set_ylabel('Cross-shore distance [m]', fontsize=12)
+        # Invert the axis so 0m (beach) is at top, max (offshore) is at bottom
+        # This matches the natural interpretation: top = onshore/beach, bottom = offshore/sea
+        ax1_right.set_ylim(max_distance, 0)  # Inverted: max to 0
+        ax1_right.set_ylabel('Distance from beach [m]', fontsize=12)
 
         # Overlay breakpoint locations and shoreline positions
-        # These are in METERS, so plot on the right y-axis
+        # With inverted axis, we can plot the values directly:
+        # - Small values (shoreline ~10m) appear near top (onshore)
+        # - Large values (breakpoint ~67m) appear near bottom (offshore)
         if breakpoint_locations is not None and len(breakpoint_locations) > 0:
             valid_bp = ~np.isnan(breakpoint_locations)
             if np.any(valid_bp):
