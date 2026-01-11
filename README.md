@@ -2,7 +2,7 @@
 
 CoastCams is an open-source MATLAB toolbox designed to quantify key wave parameters, mean water levels, bathymetry, and morphology in the nearshore environment using oblique orthorectified timestack images from land-based coastal monitoring systems.
 
-[Visit webpage] (https://nuytssiegmund.github.io/CoastCams/)
+**[Visit webpage] (https://nuytssiegmund.github.io/CoastCams/)**
 
 ## Key Features
 
